@@ -1,0 +1,9 @@
+graph TD
+    A[Kafka] --> B[Consumer Service]
+    B --> C[PostgreSQL]
+    B --> D[Redis]
+    C -.-> D[Redis]
+    D -.-> C[PostgreSQL]
+    D --> E[HTTP Server]
+    E --> D
+    E <--> F[Web Interface]
