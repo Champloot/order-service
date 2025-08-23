@@ -11,7 +11,7 @@ services:
   redis:
     image: redis:6
     ports:
-      - "6379;6379"
+      - "6379:6379"
 
   zookeeper:
     image: confluentic/cp-zookeeper:7.0.0
