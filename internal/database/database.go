@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"log"
 	// "time"
-
+	"order-service/internal/models"
 	// "github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -71,5 +71,71 @@ func (r *PostgresRepository) createTables(ctx context.Context) error {
 }
 
 func (r *PostgresRepository) Close() {
-	r.pool.Close()
+	r.pool.Close()ctx
+}
+
+func (r *PostgresRepository) SaveOrder(ctx context.Context, order *models.Order) error {
+	query := `
+		INSERT INTO orders (
+			order_uid, track_number, entry, delivery, payment, items,
+			locale, internal_signature, customer_idm, delivery_service,
+			shardkey, sm_id, date_created, oof_shard
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+		ON CONFLICT (order_uid) DO UPDATE SET
+			track_number = EXCLUDED.track_number,
+			entry = EXCLUDED.entry,
+			delivery = EXCLUDED.delivery,
+			payment = EXCLUDED.payment,
+			items = EXCLUDED.items,
+			locale = EXCLUDED.locale,
+			internal_signature = EXCLUDED.internal_signature,
+			customer_id = EXCLUDED.customer_id,
+			delivery_service = EXCLUDED.delivery_service,
+			shardkey = EXCLUDED.shardkey,
+			sm_id = EXCLUDED.sm_id,
+			date_created = EXCLUDED.date_created,
+			oof_shard = EXCLUDED.oof_shard
+	`
+
+	// Converted to JSON
+	deliveryJSON, err := json.Marshal(order.Delivery)
+	if err != nil {
+		return fmt.Errorf("failed to marshal delivery: %w", err)
+	}
+
+	paymentJSON, err := json.Marshal(order.Payment)
+	if err != nil {
+		return fmt.Errorf("failed to marshal payment: %w", err)
+	}
+
+	itemsJSON, err := json.Marshal(order.Items)
+	if err != nil {
+		return fmt.Errorf("failed to marshal items: %w", err)
+	}
+
+	_, err = r.pool.Exec(
+		ctx,
+		query,
+		order.OrderUID,
+		order.TrackNumber,
+		order.Entry,
+		deliveryJSON,
+		paymentJSON,
+		itemsJSON,
+		order.Locale,
+		order.InternalSignature,
+		order.CustomerID,
+		order.DeliveryService,
+		order.Shardkey,
+		order.SmID,
+		order.DateCreated,
+		order.OofShard,
+	)
+
+	if err != nil {
+		return fmt.Errorf("failed to save order: %w", err)
+	}
+
+	log.Printf("Order %s saved successfully", order.OrderUID)
+	return nil
 }
