@@ -2,12 +2,12 @@ package database
 
 import (
 	"context"
-	// "encoding/json"
+	"encoding/json"
 	"fmt"
 	"log"
-	// "time"
+	"time"
 	"order-service/internal/models"
-	// "github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -59,6 +59,7 @@ func (r *PostgresRepository) createTables(ctx context.Context) error {
 		);
 
 		CREATE INDEX IF NOT EXISTS idx_orders_order_uid ON orders(order_uid);
+				CREATE INDEX IF NOT EXISTS idx_orders_date_created ON orders(date_created);
 	`
 
 	_, err := r.pool.Exec(ctx, query)
@@ -71,14 +72,14 @@ func (r *PostgresRepository) createTables(ctx context.Context) error {
 }
 
 func (r *PostgresRepository) Close() {
-	r.pool.Close()ctx
+	r.pool.Close()
 }
 
 func (r *PostgresRepository) SaveOrder(ctx context.Context, order *models.Order) error {
 	query := `
 		INSERT INTO orders (
 			order_uid, track_number, entry, delivery, payment, items,
-			locale, internal_signature, customer_idm, delivery_service,
+			locale, internal_signature, customer_id, delivery_service,
 			shardkey, sm_id, date_created, oof_shard
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 		ON CONFLICT (order_uid) DO UPDATE SET
@@ -138,4 +139,59 @@ func (r *PostgresRepository) SaveOrder(ctx context.Context, order *models.Order)
 
 	log.Printf("Order %s saved successfully", order.OrderUID)
 	return nil
+}
+
+func (r *PostgresRepository) GetOrder(ctx context.Context, OrderUID string) (*models.Order, error) {
+	query := `
+		SELECT
+			order_uid, track_number, entry, delivery, payment, items,
+			locale, internal_signature, customer_id, delivery_service,
+			shardkey, sm_id, date_created, oof_shard
+		FROM orders
+		WHERE order_uid = $1
+	`
+
+	var order models.Order
+	var deliveryJSON, paymentJSON, itemsJSON []byte
+	var DateCreated time.Time
+
+	err := r.pool.QueryRow(ctx, query, OrderUID).Scan(
+		&order.OrderUID,
+		&order.TrackNumber,
+		&order.Entry,
+		&deliveryJSON,
+		&paymentJSON,
+		&itemsJSON,
+		&order.Locale,
+		&order.InternalSignature,
+		&order.CustomerID,
+		&order.DeliveryService,
+		&order.Shardkey,
+		&order.SmID,
+		&DateCreated,
+		&order.OofShard,
+	)
+
+	if err == pgx.ErrNoRows {
+		return nil, nil
+	} else if err != nil {
+		return nil, fmt.Errorf("failed to get order: %w", err)
+	}
+
+	order.DateCreated = DateCreated
+
+	// Parse JSON fields
+	if err := json.Unmarshal(deliveryJSON, &order.Delivery); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal delivery: %w", err)
+	}
+
+	if err := json.Unmarshal(paymentJSON, &order.Payment); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal payment: %w", err)
+	}
+
+	if err := json.Unmarshal(itemsJSON, &order.Items); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal items: %w", err)
+	}
+
+	return &order, nil
 }
