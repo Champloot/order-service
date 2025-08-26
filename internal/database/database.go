@@ -2,12 +2,12 @@ package database
 
 import (
 	"context"
-	"encoding/json"
+	// "encoding/json"
 	"fmt"
 	"log"
-	"time"
+	// "time"
 
-	"github.com/jackc/pgx/v5"
+	// "github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -28,7 +28,7 @@ func NewPostgresRepository(ctx context.Context, connString string) (*PostgresRep
 		return nil, fmt.Errorf("Failed to create connection pool: %w", err)
 	}
 
-	repo := $PostgresRepository{pool: pool}
+	repo := &PostgresRepository{pool: pool}
 
 	// Test the connection
 	if err := pool.Ping(ctx); err != nil {
@@ -59,7 +59,6 @@ func (r *PostgresRepository) createTables(ctx context.Context) error {
 		);
 
 		CREATE INDEX IF NOT EXISTS idx_orders_order_uid ON orders(order_uid);
-		CREATE INDEX IF NOT EXISTS idx_orders_date_create ON orders(date_created);
 	`
 
 	_, err := r.pool.Exec(ctx, query)
