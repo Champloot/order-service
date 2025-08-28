@@ -101,17 +101,17 @@ func (r *PostgresRepository) SaveOrder(ctx context.Context, order *models.Order)
 	// Converted to JSON
 	deliveryJSON, err := json.Marshal(order.Delivery)
 	if err != nil {
-		return fmt.Errorf("failed to marshal delivery: %w", err)
+		return fmt.Errorf("Failed to marshal delivery: %w", err)
 	}
 
 	paymentJSON, err := json.Marshal(order.Payment)
 	if err != nil {
-		return fmt.Errorf("failed to marshal payment: %w", err)
+		return fmt.Errorf("Failed to marshal payment: %w", err)
 	}
 
 	itemsJSON, err := json.Marshal(order.Items)
 	if err != nil {
-		return fmt.Errorf("failed to marshal items: %w", err)
+		return fmt.Errorf("Failed to marshal items: %w", err)
 	}
 
 	_, err = r.pool.Exec(
@@ -134,7 +134,7 @@ func (r *PostgresRepository) SaveOrder(ctx context.Context, order *models.Order)
 	)
 
 	if err != nil {
-		return fmt.Errorf("failed to save order: %w", err)
+		return fmt.Errorf("Failed to save order: %w", err)
 	}
 
 	log.Printf("Order %s saved successfully", order.OrderUID)
@@ -175,22 +175,22 @@ func (r *PostgresRepository) GetOrder(ctx context.Context, OrderUID string) (*mo
 	if err == pgx.ErrNoRows {
 		return nil, nil
 	} else if err != nil {
-		return nil, fmt.Errorf("failed to get order: %w", err)
+		return nil, fmt.Errorf("Failed to get order: %w", err)
 	}
 
 	order.DateCreated = DateCreated
 
 	// Parse JSON fields
 	if err := json.Unmarshal(deliveryJSON, &order.Delivery); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal delivery: %w", err)
+		return nil, fmt.Errorf("Failed to unmarshal delivery: %w", err)
 	}
 
 	if err := json.Unmarshal(paymentJSON, &order.Payment); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal payment: %w", err)
+		return nil, fmt.Errorf("Failed to unmarshal payment: %w", err)
 	}
 
 	if err := json.Unmarshal(itemsJSON, &order.Items); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal items: %w", err)
+		return nil, fmt.Errorf("Failed to unmarshal items: %w", err)
 	}
 
 	return &order, nil
