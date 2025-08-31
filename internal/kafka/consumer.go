@@ -4,42 +4,35 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"time"
 
 	"order-service/internal/models"
 	"order-service/internal/database"
 
 	"github.com/segmentio/kafka-go"
-	"github.com/segmentio/kafka-go/snappy"
 )
 
 type Consumer struct {
-	reader	*kafka.Reader
-	db		*database.PostgresDB
-	timeout	time.Duration
+	reader  *kafka.Reader
+	db      *database.PostgresRepository
+	timeout time.Duration
 }
 
-func NewConsumer(config *KafkaConfig, db *database.PostgresDB) *Consumer {
-	dialer := &kafka.Dialer{
-		Timeout:	10 * time.Second,
-		DualStack:	true,
-	}
-
-	reader := kafka.NewReader(kafka.ReadConfig{
-		Brokers:			config.Brokers,
-		Topic:				config.Topic,
-		GroupID:			config.GroupID,
-		Dialer:				dialer,
-		MinBytes:			config.MinBytes,
-		MaxBytes:			config.MaxBytes,
-		MaxWait:			1 * time.Second,
-		CompressionCodec:	snappy.NewCompressionCodec(),
+func NewConsumer(brokers []string, topic string, db *database.PostgresRepository) *Consumer {
+	reader := kafka.NewReader(kafka.ReaderConfig{
+		Brokers:     brokers,
+		Topic:       topic,
+		StartOffset: kafka.FirstOffset, // read from begin
+		MinBytes:    10e3,              // 10KB
+		MaxBytes:    10e6,              // 10MB
+		MaxWait:     1 * time.Second,
 	})
 
 	return &Consumer{
-		reader:		reader,
-		db:			db,
-		timeout:	10 * time.Second,
+		reader:  reader,
+		db:      db,
+		timeout: 10 * time.Second,
 	}
 }
 
@@ -48,39 +41,46 @@ func (c *Consumer) Start(ctx context.Context) {
 
 	for {
 		select {
-			case <-ctx.Done():
-				return
-			default:
-				msg, err := c.reader.ReadMessage(ctx)
-				if err != nil {
-					log.Printf("Error reading message: %v", err)
-					continue
-				}
+		case <-ctx.Done():
+			return
+		default:
+			msg, err := c.reader.ReadMessage(ctx)
+			if err != nil {
+				log.Printf("Error reading message: %v", err)
+				time.Sleep(5 * time.Second) // Пауза перед повторной попыткой
+				continue
+			}
 
-				log.Printf("Recived message: %s", string(msg.Value))
+			log.Printf("Received message: %s", string(msg.Value))
 
-				if err := c.processMessage(ctx, msg.Value); err != nil {
-					log.Printf("Error processing message: %v", err)
-				}
+			if err := c.processMessage(ctx, msg.Value); err != nil {
+				log.Printf("Error processing message: %v", err)
+			}
 		}
 	}
 }
 
-
 func (c *Consumer) processMessage(ctx context.Context, data []byte) error {
+	log.Printf("Processing raw message: %s", string(data))
+	
 	var order models.Order
 	if err := json.Unmarshal(data, &order); err != nil {
-		return fmt.Errorf("Failed to unmarshal order: %v", err)
+		log.Printf("Failed to unmarshal order: %v", err)
+		return fmt.Errorf("failed to unmarshal order: %v", err)
 	}
 
-	// data validation
+	// Data validation
 	if order.OrderUID == "" {
-		return fmt.Errorf("Order UID is required")
+		log.Printf("Order UID is empty")
+		return fmt.Errorf("order UID is required")
 	}
+
+	log.Printf("Processing order: %s", order.OrderUID)
 
 	// save
 	if err := c.db.SaveOrder(ctx, &order); err != nil {
-		return fmt.Errorf("Failed to save order to database: %v", err)		
+		log.Printf("Failed to save order to database: %v", err)
+		return fmt.Errorf("failed to save order to database: %v", err)
 	}
 
 	log.Printf("Successfully processed order %s", order.OrderUID)
