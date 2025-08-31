@@ -15,7 +15,7 @@ type PostgresRepository struct {
 	pool *pgxpool.Pool
 }
 
-func NewPostgresRepository(ctx context.Context, connString string) (*PostgresRepository, error){
+func NewPostgresRepository(ctx context.Context, connString string) (*PostgresRepository, error) {
 	// Parse connection string
 	config, err := pgxpool.ParseConfig(connString)
 	if err != nil {
@@ -33,6 +33,11 @@ func NewPostgresRepository(ctx context.Context, connString string) (*PostgresRep
 	// Test the connection
 	if err := pool.Ping(ctx); err != nil {
 		return nil, fmt.Errorf("Failed to ping database: %w", err)
+	}
+
+	// Create tables
+	if err := repo.createTables(ctx); err != nil {
+		return nil, fmt.Errorf("Failed to create tables: %w", err)
 	}
 
 	log.Println("Successfully connected to PostgreSQL")
@@ -194,4 +199,71 @@ func (r *PostgresRepository) GetOrder(ctx context.Context, OrderUID string) (*mo
 	}
 
 	return &order, nil
+}
+
+func (r *PostgresRepository) GetAllOrders(ctx context.Context) ([]models.Order, error) {
+	query := `
+		SELECT
+			order_uid, track_number, entry, delivery, payment, items,
+			locale, internal_signature, customer_id, delivery_service,
+			shardkey, sm_id, date_created, oof_shard
+		FROM orders
+	`
+
+	rows, err := r.pool.Query(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query orders: %w", err)
+	}
+	defer rows.Close()
+
+	var orders []models.Order
+
+	for rows.Next() {
+		var order models.Order
+		var deliveryJSON, paymentJSON, itemsJSON []byte
+		var dateCreated time.Time
+
+		err := rows.Scan(
+			&order.OrderUID,
+			&order.TrackNumber,
+			&order.Entry,
+			&deliveryJSON,
+			&paymentJSON,
+			&itemsJSON,
+			&order.Locale,
+			&order.InternalSignature,
+			&order.CustomerID,
+			&order.DeliveryService,
+			&order.Shardkey,
+			&order.SmID,
+			&dateCreated,
+			&order.OofShard,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan order: %w", err)
+		}
+
+		order.DateCreated = dateCreated
+
+		// Parse JSON fields
+		if err := json.Unmarshal(deliveryJSON, &order.Delivery); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal delivery: %w", err)
+		}
+
+		if err := json.Unmarshal(paymentJSON, &order.Payment); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal payment: %w", err)
+		}
+
+		if err := json.Unmarshal(itemsJSON, &order.Items); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal items: %w", err)
+		}
+
+		orders = append(orders, order)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating orders: %w", err)
+	}
+
+	return orders, nil
 }
