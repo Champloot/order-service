@@ -3,3 +3,4 @@ order-service
 *.log
 *.out
 /output.mkv
+cmd/tests

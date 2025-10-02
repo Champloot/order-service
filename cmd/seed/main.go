@@ -73,7 +73,7 @@ func main() {
 			OofShard:          "1",
 		}
 
-		// json serializtion (her znaet kak pishetsa)
+		// json serializtion
 		orderJSON, err := json.Marshal(order)
 		if err != nil {
 			log.Fatalf("Failed to marshal order: %v", err)
