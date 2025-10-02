@@ -1,16 +1,13 @@
-.PHONY: build run test clean
+.PHONY: build run test clean docker-up docker-down create-topic produce-test
 
 build:
-	go build -o order-service ./cmd/server
+	go build -o bin/order-service ./cmd/server
 
 run:
 	go run ./cmd/server
 
-test:
-	go test ./...
-
 clean:
-	rm -f order-service
+	rm -rf bin/
 
 docker-up:
 	docker compose up -d
@@ -23,3 +20,6 @@ create-topic:
 
 produce-test:
 	go run ./cmd/producer
+
+seed-db:
+	go run ./cmd/seed
