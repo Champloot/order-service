@@ -1,4 +1,4 @@
-.PHONY: build run test clean docker-up docker-down create-topic produce-test
+.PHONY: build run clean docker-up docker-down create-topic produce-test seed-db
 
 build:
 	go build -o bin/order-service ./cmd/server
