@@ -1,2 +1,5 @@
-cmd/tests/
-cmd/producer/
+bin/
+order-service
+*.log
+*.out
+/output.mkv
