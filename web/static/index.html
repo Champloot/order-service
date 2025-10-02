@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Order Service</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .search-form {
+            margin-bottom: 20px;
+        }
+        input[type="text"] {
+            padding: 8px;
+            width: 300px;
+            margin-right: 10px;
+        }
+        button {
+            padding: 8px 16px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            cursor: pointer;
+            margin-right: 10px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        .result {
+            margin-top: 20px;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .error {
+            color: red;
+        }
+        .loading {
+            color: #666;
+        }
+        .source-cache {
+            color: green;
+            font-weight: bold;
+        }
+        .source-database {
+            color: blue;
+            font-weight: bold;
+        }
+        .benchmark-result {
+            margin-top: 20px;
+            padding: 15px;
+            background-color: #f5f5f5;
+            border-radius: 4px;
+        }
+        .timing-info {
+            margin-top: 10px;
+            padding: 10px;
+            background-color: #eee;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Order Information Service</h1>
+    
+    <div class="search-form">
+        <input type="text" id="orderId" placeholder="Enter Order ID">
+        <button onclick="getOrder()">Get Order</button>
+        <button onclick="runBenchmark()">Run Benchmark</button>
+    </div>
+    
+    <div id="result" class="result"></div>
+    <div id="benchmark" class="benchmark-result"></div>
+
+    <script>
+        function getOrder() {
+            const orderId = document.getElementById('orderId').value.trim();
+            const resultDiv = document.getElementById('result');
+            const benchmarkDiv = document.getElementById('benchmark');
+            
+            benchmarkDiv.innerHTML = '';
+            
+            if (!orderId) {
+                resultDiv.innerHTML = '<div class="error">Please enter an Order ID</div>';
+                return;
+            }
+
+            resultDiv.innerHTML = '<div class="loading">Loading...</div>';
+
+            fetch(`/api/order/${orderId}`)
+                .then(response => {
+                    if (!response.ok) {
+                        if (response.status === 404) {
+                            throw new Error('Order not found');
+                        } else {
+                            throw new Error('Error fetching order');
+                        }
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    resultDiv.innerHTML = formatOrder(data);
+                })
+                .catch(error => {
+                    resultDiv.innerHTML = `<div class="error">${error.message}</div>`;
+                });
+        }
+
+        function runBenchmark() {
+            const benchmarkDiv = document.getElementById('benchmark');
+            const resultDiv = document.getElementById('result');
+            
+            resultDiv.innerHTML = '';
+            benchmarkDiv.innerHTML = '<div class="loading">Running benchmark...</div>';
+
+            fetch('/api/benchmark')
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('Error running benchmark');
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    benchmarkDiv.innerHTML = formatBenchmark(data);
+                })
+                .catch(error => {
+                    benchmarkDiv.innerHTML = `<div class="error">${error.message}</div>`;
+                });
+        }
+
+        function formatOrder(data) {
+            const order = data.order;
+            const source = data.source;
+            const timing = data.timing;
+            
+            const sourceClass = source === 'cache' ? 'source-cache' : 'source-database';
+            
+            return `
+                <div class="timing-info">
+                    <p>Data source: <span class="${sourceClass}">${source}</span></p>
+                    <p>Total time: ${timing.total}</p>
+                    <p>Fetch time: ${timing.fetch}</p>
+                </div>
+                <h2>Order Details</h2>
+                <p><strong>Order UID:</strong> ${order.order_uid}</p>
+                <p><strong>Track Number:</strong> ${order.track_number}</p>
+                <p><strong>Entry:</strong> ${order.entry}</p>
+                <p><strong>Locale:</strong> ${order.locale}</p>
+                <p><strong>Customer ID:</strong> ${order.customer_id}</p>
+                <p><strong>Delivery Service:</strong> ${order.delivery_service}</p>
+                <p><strong>Date Created:</strong> ${new Date(order.date_created).toLocaleString()}</p>
+                
+                <h3>Delivery Information</h3>
+                <p><strong>Name:</strong> ${order.delivery.name}</p>
+                <p><strong>Phone:</strong> ${order.delivery.phone}</p>
+                <p><strong>Zip:</strong> ${order.delivery.zip}</p>
+                <p><strong>City:</strong> ${order.delivery.city}</p>
+                <p><strong>Address:</strong> ${order.delivery.address}</p>
+                <p><strong>Region:</strong> ${order.delivery.region}</p>
+                <p><strong>Email:</strong> ${order.delivery.email}</p>
+                
+                <h3>Payment Information</h3>
+                <p><strong>Transaction:</strong> ${order.payment.transaction}</p>
+                <p><strong>Currency:</strong> ${order.payment.currency}</p>
+                <p><strong>Provider:</strong> ${order.payment.provider}</p>
+                <p><strong>Amount:</strong> ${order.payment.amount}</p>
+                <p><strong>Payment Date:</strong> ${new Date(order.payment.payment_dt * 1000).toLocaleString()}</p>
+                <p><strong>Bank:</strong> ${order.payment.bank}</p>
+                <p><strong>Delivery Cost:</strong> ${order.payment.delivery_cost}</p>
+                <p><strong>Goods Total:</strong> ${order.payment.goods_total}</p>
+                
+                <h3>Items (${order.items.length})</h3>
+                ${order.items.map(item => `
+                    <div style="margin-bottom: 15px; padding: 10px; border: 1px solid #eee;">
+                        <p><strong>Name:</strong> ${item.name}</p>
+                        <p><strong>Brand:</strong> ${item.brand}</p>
+                        <p><strong>Price:</strong> ${item.price}</p>
+                        <p><strong>Total Price:</strong> ${item.total_price}</p>
+                        <p><strong>Status:</strong> ${item.status}</p>
+                    </div>
+                `).join('')}
+            `;
+        }
+
+        function formatBenchmark(data) {
+            let resultsHtml = '<h2>Benchmark Results</h2>';
+            
+            // Результаты по каждому запросу
+            resultsHtml += '<h3>Individual Requests</h3>';
+            for (const [id, result] of Object.entries(data.results)) {
+                const sourceClass = result.source === 'cache' ? 'source-cache' : 'source-database';
+                resultsHtml += `
+                    <div>
+                        <strong>${id}:</strong> 
+                        <span class="${sourceClass}">${result.source}</span> 
+                        - ${result.duration}
+                    </div>
+                `;
+            }
+            
+            // Сводка
+            const summary = data.summary;
+            resultsHtml += `
+                <h3>Summary</h3>
+                <p>Cache requests: ${summary.cache_requests}</p>
+                <p>Database requests: ${summary.db_requests}</p>
+                <p>Average cache time: ${summary.avg_cache_time}</p>
+                <p>Average database time: ${summary.avg_db_time}</p>
+                <p class="source-cache">Cache is <strong>${summary.speed_ratio.toFixed(2)}x</strong> faster than database</p>
+            `;
+            
+            return resultsHtml;
+        }
+    </script>
+</body>
+</html>
