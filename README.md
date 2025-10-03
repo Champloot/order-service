@@ -192,3 +192,10 @@ GET /api/benchmark
 | KAFKA_TOPIC       | orders                                                               | Kafka топик                  |
 | KAFKA_GROUP_ID    | order-service                                                        | Kafka group ID               |
 | HTTP_ADDR         | :8080                                                                | HTTP порт                    |
+
+## TODO
+- миграции бд
+- graceful shutdown for server
+- валидация order_uid против sqli
+- логирование получше
+- тесты
