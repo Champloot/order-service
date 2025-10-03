@@ -6,27 +6,27 @@
 
 Этот проект представляет собой полноценный микросервис для обработки заказов, реализующий:
 
-· Прием заказов через Kafka
-· Хранение данных в PostgreSQL
-· Кэширование в Redis для ускорения доступа
-· REST API для получения информации о заказах
-· Веб-интерфейс для тестирования и мониторинга
-· Бенчмаркинг производительности кэша vs базы данных
+- Прием заказов через Kafka
+- Хранение данных в PostgreSQL
+- Кэширование в Redis для ускорения доступа
+- REST API для получения информации о заказах
+- Веб-интерфейс для тестирования и мониторинга
+- Бенчмаркинг производительности кэша vs базы данных
 
 ## Технологии
 
-· Backend: Go 1.19+
-· Database: PostgreSQL 13
-· Cache: Redis 6
-· Message Broker: Kafka 7.0.0 + Zookeeper
-· Containerization: Docker + Docker Compose
-· HTTP Server: Native Go HTTP
+- Backend: Go 1.19+
+- Database: PostgreSQL 13
+- Cache: Redis 6
+- Message Broker: Kafka 7.0.0 + Zookeeper
+- Containerization: Docker + Docker Compose
+- HTTP Server: Native Go HTTP
 
 ## Требования
 
-· Go 1.19 или выше
-· Docker и Docker Compose
-· Git
+- Go 1.19 или выше
+- Docker и Docker Compose
+- Git
 
 ## Быстрый старт
 
