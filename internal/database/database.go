@@ -4,15 +4,34 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"errors"
 	"log"
 	"time"
+
 	"order-service/internal/models"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/pgconn"
 )
+
+var (
+	ErrOrderNotFound = errors.New("Order not found")
+)
+
+type Querier interface {
+	Query(ctx context.Context, sql string, args ...interface{}) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...interface{}) pgx.Row
+	Exec(ctx context.Context, sql string, args ...interface{}) (pgconn.CommandTag, error)
+}
 
 type PostgresRepository struct {
 	pool *pgxpool.Pool
+}
+
+// Wrapper for transactions with methods Commit/Rollback
+type TxWrapper struct {
+	tx pgx.Tx
 }
 
 func NewPostgresRepository(ctx context.Context, connString string) (*PostgresRepository, error) {
@@ -21,6 +40,13 @@ func NewPostgresRepository(ctx context.Context, connString string) (*PostgresRep
 	if err != nil {
 		return nil, fmt.Errorf("Failed to parse connection string: %w", err)
 	}
+
+	// set params for pool
+	config.MaxConns = 20
+	config.MinConns = 5
+	config.MaxConnLifetime = time.Hour
+	config.MaxConnIdleTime = 30 * time.Minute
+	config.HealthCheckPeriod = time.Minute
 
 	// Create connection pool
 	pool, err := pgxpool.NewWithConfig(ctx, config)
@@ -37,11 +63,69 @@ func NewPostgresRepository(ctx context.Context, connString string) (*PostgresRep
 
 	// Create tables
 	if err := repo.createTables(ctx); err != nil {
-		return nil, fmt.Errorf("Failed to create tables: %w", err)
+		return nil, fmt.Errorf("Failed to init schema: %w", err)
 	}
 
 	log.Println("Successfully connected to PostgreSQL")
 	return repo, nil
+}
+
+func (r *PostgresRepository) BeginTx(ctx context.Context) (*TxWrapper, error) {
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{
+		IsoLevel:	pgx.ReadCommitted,
+		AccessMode:	pgx.ReadWrite,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("Failed to begin transaction: %w", err)
+	}
+	return &TxWrapper{tx: tx}, nil
+}
+
+// commit of transaction
+func (tw *TxWrapper) Commit(ctx context.Context) error {
+	if err := tw.tx.Commit(ctx); err != nil {
+		return fmt.Errorf("Failed to commit transaction: %w", err)
+	}
+	return nil
+}
+
+// rollback of transaction
+func (tw *TxWrapper) Rollback(ctx context.Context) error {
+	if err := tw.tx.Rollback(ctx); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
+		return fmt.Errorf("Failed to rollback transaction: %w", err)
+	}
+	return nil
+}
+
+func (tw *TxWrapper) GetQuerier() Querier {
+	return tw.tx
+}
+
+func (r *PostgresRepository) WithTransaction(ctx context.Context, fn func(tx *TxWrapper) error) error {
+	tx, err := r.BeginTx(ctx)
+	if err != nil {
+		return err
+	}
+
+	defer func() {
+		if p := recover(); p != nil {
+			_ = tx.Rollback
+			panic(p)
+		}
+	}()
+
+	if err := fn(tx); err != nil {
+		if rollbackErr := tx.Rollback(ctx); rollbackErr != nil {
+			return fmt.Errorf("Transaction error: %w, rollback error: %v", err, rollbackErr)
+		}
+		return err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("Failed to commit transaction: %w", err)
+	}
+
+	return nil
 }
 
 func (r *PostgresRepository) createTables(ctx context.Context) error {
@@ -64,7 +148,8 @@ func (r *PostgresRepository) createTables(ctx context.Context) error {
 		);
 
 		CREATE INDEX IF NOT EXISTS idx_orders_order_uid ON orders(order_uid);
-				CREATE INDEX IF NOT EXISTS idx_orders_date_created ON orders(date_created);
+		CREATE INDEX IF NOT EXISTS idx_orders_date_created ON orders(date_created);
+		CREATE INDEX IF NOT EXISTS idx_orders_customer_id ON orders(customer_id);
 	`
 
 	_, err := r.pool.Exec(ctx, query)
@@ -81,6 +166,15 @@ func (r *PostgresRepository) Close() {
 }
 
 func (r *PostgresRepository) SaveOrder(ctx context.Context, order *models.Order) error {
+	return r.saveOrder(ctx, r.pool, order)
+}
+
+// with transaction
+func (r *PostgresRepository) SaveOrderTx(ctx context.Context, tx *TxWrapper, order *models.Order) error {
+	return r.saveOrder(ctx, tx.GetQuerier(), order)
+}
+
+func (r *PostgresRepository) saveOrder(ctx context.Context, querier Querier, order *models.Order) error {
 	query := `
 		INSERT INTO orders (
 			order_uid, track_number, entry, delivery, payment, items,
@@ -119,7 +213,7 @@ func (r *PostgresRepository) SaveOrder(ctx context.Context, order *models.Order)
 		return fmt.Errorf("Failed to marshal items: %w", err)
 	}
 
-	_, err = r.pool.Exec(
+	_, err = querier.Exec(
 		ctx,
 		query,
 		order.OrderUID,
@@ -146,7 +240,16 @@ func (r *PostgresRepository) SaveOrder(ctx context.Context, order *models.Order)
 	return nil
 }
 
-func (r *PostgresRepository) GetOrder(ctx context.Context, OrderUID string) (*models.Order, error) {
+func (r *PostgresRepository) GetOrder(ctx context.Context, orderUID string) (*models.Order, error) {
+	return r.getOrder(ctx, r.pool, orderUID)
+}
+
+// transaction version
+func (r *PostgresRepository) GetOrderTx(ctx context.Context, tx *TxWrapper, orderUID string) (*models.Order, error) {
+	return r.getOrder(ctx, tx.GetQuerier(), orderUID)
+}
+
+func (r *PostgresRepository) getOrder(ctx context.Context, querier Querier, orderUID string) (*models.Order, error) {
 	query := `
 		SELECT
 			order_uid, track_number, entry, delivery, payment, items,
@@ -160,7 +263,7 @@ func (r *PostgresRepository) GetOrder(ctx context.Context, OrderUID string) (*mo
 	var deliveryJSON, paymentJSON, itemsJSON []byte
 	var DateCreated time.Time
 
-	err := r.pool.QueryRow(ctx, query, OrderUID).Scan(
+	err := querier.QueryRow(ctx, query, orderUID).Scan(
 		&order.OrderUID,
 		&order.TrackNumber,
 		&order.Entry,
@@ -177,8 +280,9 @@ func (r *PostgresRepository) GetOrder(ctx context.Context, OrderUID string) (*mo
 		&order.OofShard,
 	)
 
-	if err == pgx.ErrNoRows {
-		return nil, nil
+	// use error.is
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrOrderNotFound
 	} else if err != nil {
 		return nil, fmt.Errorf("Failed to get order: %w", err)
 	}
@@ -202,17 +306,27 @@ func (r *PostgresRepository) GetOrder(ctx context.Context, OrderUID string) (*mo
 }
 
 func (r *PostgresRepository) GetAllOrders(ctx context.Context) ([]models.Order, error) {
+	return r.getAllOrders(ctx, r.pool)
+}
+
+// transaction version
+func (r *PostgresRepository) GetAllOrdersTx(ctx context.Context, tx *TxWrapper) ([]models.Order, error) {
+	return r.getAllOrders(ctx, tx.GetQuerier())
+}
+
+func (r *PostgresRepository) getAllOrders(ctx context.Context, querier Querier) ([]models.Order, error) {
 	query := `
 		SELECT
 			order_uid, track_number, entry, delivery, payment, items,
 			locale, internal_signature, customer_id, delivery_service,
 			shardkey, sm_id, date_created, oof_shard
 		FROM orders
+		ORDER BY date_created DESC
 	`
 
-	rows, err := r.pool.Query(ctx, query)
+	rows, err := querier.Query(ctx, query)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query orders: %w", err)
+		return nil, fmt.Errorf("Failed to query orders: %w", err)
 	}
 	defer rows.Close()
 
@@ -240,30 +354,54 @@ func (r *PostgresRepository) GetAllOrders(ctx context.Context) ([]models.Order, 
 			&order.OofShard,
 		)
 		if err != nil {
-			return nil, fmt.Errorf("failed to scan order: %w", err)
+			return nil, fmt.Errorf("Failed to scan order: %w", err)
 		}
 
 		order.DateCreated = dateCreated
 
 		// Parse JSON fields
 		if err := json.Unmarshal(deliveryJSON, &order.Delivery); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal delivery: %w", err)
+			return nil, fmt.Errorf("Failed to unmarshal delivery: %w", err)
 		}
 
 		if err := json.Unmarshal(paymentJSON, &order.Payment); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal payment: %w", err)
+			return nil, fmt.Errorf("Failed to unmarshal payment: %w", err)
 		}
 
 		if err := json.Unmarshal(itemsJSON, &order.Items); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal items: %w", err)
+			return nil, fmt.Errorf("Failed to unmarshal items: %w", err)
 		}
 
 		orders = append(orders, order)
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating orders: %w", err)
+		return nil, fmt.Errorf("Error iterating orders: %w", err)
 	}
 
 	return orders, nil
+}
+
+func (r *PostgresRepository) DeleteOrder(ctx context.Context, orderUID string) error {
+	return r.deleteOrder(ctx, r.pool, orderUID)
+}
+
+func (r *PostgresRepository) DeleteOrderTx(ctx context.Context, tx *TxWrapper, orderUID string) error {
+	return r.deleteOrder(ctx, tx.GetQuerier(), orderUID)
+}
+
+func (r *PostgresRepository) deleteOrder(ctx context.Context, querier Querier, orderUID string) error {
+	query := `DELETE FROM orders WHERE order_uid = $1`
+
+	result, err := querier.Exec(ctx, query, orderUID)
+	if err != nil {
+		return fmt.Errorf("Failed to delete order: %w", err)
+	}
+
+	if result.RowsAffected() == 0 {
+		return ErrOrderNotFound
+	}
+
+	log.Printf("Order %s deleted successfully", orderUID)
+	return nil
 }

@@ -17,19 +17,28 @@ import (
 
 func main() {
 	// config
-	cfg := config.LoadConfig()
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("Failed to load config: %v", err)
+	}
+
+	log.Printf("Starting service in %s mode", cfg.App.Env)
 
 	ctx := context.Background()
 
 	// db init
-	db, err := database.NewPostgresRepository(ctx, cfg.PostgresConnStr)
+	db, err := database.NewPostgresRepository(ctx, cfg.Database.URL)
 	if err != nil {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
 	defer db.Close()
 
 	// cache init
-	redisCache, err := cache.NewRedisCache(cfg.RedisAddr, cfg.RedisPassword, cfg.RedisDB, cfg.CacheTTL)
+	redisCache, err := cache.NewRedisCache(
+		cfg.Cache.Addr,
+		cfg.Cache.Password,
+		cfg.Cache.DB,
+		cfg.Cache.TTL)
 	if err != nil {
 		log.Fatalf("Failed to initialize Redis cache: %v", err)
 	}
@@ -50,9 +59,14 @@ func main() {
 
 	// kafka consumer init
 	consumer := kafka.NewConsumer(
-		cfg.KafkaBrokers,
-		cfg.KafkaTopic,
+		cfg.Kafka.Brokers,
+		cfg.Kafka.Topic,
 		db,
+		cfg.Consumer.Timeout,
+		cfg.Consumer.MinBytes,
+		cfg.Consumer.MaxBytes,
+		cfg.Consumer.MaxWait,
+		cfg.Consumer.RetryDelay,
 	)
 	defer consumer.Close()
 
@@ -65,8 +79,8 @@ func main() {
 	// http server init
 	httpServer := http.NewServer(redisCache, db)
 	go func() {
-		log.Printf("Starting HTTP server on %s", cfg.HTTPAddr)
-		if err := httpServer.Start(cfg.HTTPAddr); err != nil {
+		log.Printf("Starting HTTP server on %s", cfg.HTTP.Addr)
+		if err := httpServer.Start(cfg.HTTP.Addr); err != nil {
 			log.Fatalf("Failed to start HTTP server: %v", err)
 		}
 	}()

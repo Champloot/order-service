@@ -2,11 +2,13 @@ package http
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"strings"
 	"time"
 	"context"
+	"fmt"
 
 	"order-service/internal/cache"
 	"order-service/internal/database"
@@ -31,7 +33,8 @@ func (s *Server) Start(addr string) error {
 	// API endpoints
 	mux.HandleFunc("/api/health", s.healthHandler)
 	mux.HandleFunc("/api/order/", s.getOrderHandler)
-	mux.HandleFunc("/api/benchmark", s.benchmarkHandler) // Новый эндпоинт для бенчмарка
+	mux.HandleFunc("/api/benchmark", s.benchmarkHandler)
+	mux.HandleFunc("/api/orders/bulk", s.bulkOperationsHandler)
 
 	// Serve static files
 	fs := http.FileServer(http.Dir("./web/static"))
@@ -100,14 +103,13 @@ func (s *Server) getOrderHandler(w http.ResponseWriter, r *http.Request) {
 		dbDuration := time.Since(dbStart)
 
 		if err != nil {
+			if errors.Is(err, database.ErrOrderNotFound) {
+				log.Printf("Order %s not found in database", orderUID)
+				http.Error(w, "Order not found", http.StatusNotFound)
+				return
+			}
 			log.Printf("Error retrieving order from database: %v", err)
 			http.Error(w, "Error retrieving order", http.StatusInternalServerError)
-			return
-		}
-
-		if order == nil {
-			log.Printf("Order %s not found in database", orderUID)
-			http.Error(w, "Order not found", http.StatusNotFound)
 			return
 		}
 
@@ -128,7 +130,7 @@ func (s *Server) getOrderHandler(w http.ResponseWriter, r *http.Request) {
 	response := map[string]interface{}{
 		"order":    order,
 		"source":   source,
-		"timing": map[string]interface{}{
+		"timing":	map[string]interface{}{
 			"total":    totalDuration.String(),
 			"fetch":    duration.String(),
 			"source":   source,
@@ -141,7 +143,62 @@ func (s *Server) getOrderHandler(w http.ResponseWriter, r *http.Request) {
 	log.Printf("Order %s fetched from %s in %s (fetch: %s)", orderUID, source, totalDuration.String(), duration.String())
 }
 
-// New benchmark handler
+func (s *Server) bulkOperationsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var request struct {
+		Operations	[]string `json:"opertaions"` // get, delete ...
+		OrderIDs	[]string `json:"order_ids"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	err := s.db.WithTransaction(r.Context(), func(tx *database.TxWrapper) error {
+		for i, operation := range request.Operations {
+			if i >= len(request.OrderIDs) {
+				break
+			}
+
+			orderID := request.OrderIDs[i]
+
+			switch operation {
+			case "delete":
+				if err := s.db.DeleteOrderTx(r.Context(), tx, orderID); err != nil {
+					return fmt.Errorf("Failed to get order %s: %w", orderID, err)
+				}
+				log.Printf("Order %s deleted in transaction", orderID)
+			case "get":
+				order, err := s.db.GetOrderTx(r.Context(), tx, orderID)
+				if err != nil {
+					return fmt.Errorf("Failed to get order %s: %w", orderID, err)
+				}
+				log.Printf("Order %s retrieved in transaction: %s", orderID, order.TrackNumber)
+			default:
+				return fmt.Errorf("Unknown opertaion: %s", operation)
+			}
+		}
+		return nil
+	})
+
+	if err != nil {
+		log.Printf("Bulk opertaions failed: %v", err)
+		http.Error(w, fmt.Sprintf("Bulk opertaions failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string {
+		"status":	"success",
+		"message":	"Bulk opertaios completed successfully",
+	})
+}
+
 func (s *Server) benchmarkHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
