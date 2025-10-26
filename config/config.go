@@ -19,6 +19,11 @@ type Config struct {
 
 type DatabaseConfig struct {
 	URL string
+	MaxConns          int
+	MinConns          int
+	MaxConnLifetime   time.Duration
+	MaxConnIdleTime   time.Duration
+	HealthCheckPeriod time.Duration
 }
 
 type CacheConfig struct {
@@ -54,7 +59,12 @@ type AppConfig struct {
 func Load() (*Config, error) {
 	cfg := &Config{
 		Database: DatabaseConfig{
-			URL: getEnv("POSTGRES_URL", "postgres://user:password@localhost:5432/orderservice?sslmode=disable"),
+			URL:               getEnv("POSTGRES_URL", "postgres://user:password@localhost:5432/orderservice?sslmode=disable"),
+			MaxConns:          getEnvAsInt("DB_MAX_CONNS", 20),
+			MinConns:          getEnvAsInt("DB_MIN_CONNS", 5),
+			MaxConnLifetime:   getEnvAsDuration("DB_MAX_CONN_LIFETIME", time.Hour),
+			MaxConnIdleTime:   getEnvAsDuration("DB_MAX_CONN_IDLE_TIME", 30*time.Minute),
+			HealthCheckPeriod: getEnvAsDuration("DB_HEALTH_CHECK_PERIOD", time.Minute),
 		},
 		Cache: CacheConfig{
 			Addr:     getEnv("REDIS_ADDR", "localhost:6379"),
@@ -109,6 +119,15 @@ func (c *Config) Validate() error {
 func (c DatabaseConfig) Validate() error {
 	if c.URL == "" {
 		return fmt.Errorf("POSTGRES_URL is required")
+	}
+	if c.MaxConns <= 0 {
+		return fmt.Errorf("DB_MAX_CONNS must be positive")
+	}
+	if c.MinConns < 0 {
+		return fmt.Errorf("DB_MIN_CONNS cannot be negative")
+	}
+	if c.MinConns > c.MaxConns {
+		return fmt.Errorf("DB_MIN_CONNS cannot be greater than DB_MAX_CONNS")
 	}
 	return nil
 }
