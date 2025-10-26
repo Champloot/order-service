@@ -34,19 +34,28 @@ type TxWrapper struct {
 	tx pgx.Tx
 }
 
-func NewPostgresRepository(ctx context.Context, connString string) (*PostgresRepository, error) {
+type DatabaseConfig struct {
+	URL					string
+	MaxConns          	int
+	MinConns          	int
+	MaxConnLifetime   	time.Duration
+	MaxConnIdleTime   	time.Duration
+	HealthCheckPeriod 	time.Duration
+}
+
+func NewPostgresRepository(ctx context.Context, config DatabaseConfig) (*PostgresRepository, error) {
 	// Parse connection string
-	config, err := pgxpool.ParseConfig(connString)
+	config, err := pgxpool.ParseConfig(config.URL)
 	if err != nil {
 		return nil, fmt.Errorf("Failed to parse connection string: %w", err)
 	}
 
 	// set params for pool
-	config.MaxConns = 20
-	config.MinConns = 5
-	config.MaxConnLifetime = time.Hour
-	config.MaxConnIdleTime = 30 * time.Minute
-	config.HealthCheckPeriod = time.Minute
+	poolConfig.MaxConns = config.MaxConns
+	poolConfig.MinConns = config.MinConns
+	poolConfig.MaxConnLifetime = config.MaxConnLifetime
+	poolConfig.MaxConnIdleTime = config.MaxConnIdleTime
+	poolConfig.HealthCheckPeriod = config.HealthCheckPeriod
 
 	// Create connection pool
 	pool, err := pgxpool.NewWithConfig(ctx, config)
