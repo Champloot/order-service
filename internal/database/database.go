@@ -3,8 +3,8 @@ package database
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"errors"
+	"fmt"
 	"log"
 	"time"
 
@@ -17,6 +17,8 @@ import (
 
 var (
 	ErrOrderNotFound = errors.New("Order not found")
+	ErrTxBeginFailed = errors.New("Transaction begin failed")
+	ErrTxCommitFailed = errors.New("Transaction commit failed")
 )
 
 type Querier interface {
@@ -36,16 +38,16 @@ type TxWrapper struct {
 
 type DatabaseConfig struct {
 	URL					string
-	MaxConns          	int
-	MinConns          	int
+	MaxConns			int32
+	MinConns			int32
 	MaxConnLifetime   	time.Duration
-	MaxConnIdleTime   	time.Duration
-	HealthCheckPeriod 	time.Duration
+	MaxConnIdleTime		time.Duration
+	HealthCheckPeriod	time.Duration
 }
 
 func NewPostgresRepository(ctx context.Context, config DatabaseConfig) (*PostgresRepository, error) {
 	// Parse connection string
-	config, err := pgxpool.ParseConfig(config.URL)
+	poolConfig, err := pgxpool.ParseConfig(config.URL)
 	if err != nil {
 		return nil, fmt.Errorf("Failed to parse connection string: %w", err)
 	}
@@ -58,7 +60,7 @@ func NewPostgresRepository(ctx context.Context, config DatabaseConfig) (*Postgre
 	poolConfig.HealthCheckPeriod = config.HealthCheckPeriod
 
 	// Create connection pool
-	pool, err := pgxpool.NewWithConfig(ctx, config)
+	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
 	if err != nil {
 		return nil, fmt.Errorf("Failed to create connection pool: %w", err)
 	}
@@ -72,7 +74,7 @@ func NewPostgresRepository(ctx context.Context, config DatabaseConfig) (*Postgre
 
 	// Create tables
 	if err := repo.createTables(ctx); err != nil {
-		return nil, fmt.Errorf("Failed to init schema: %w", err)
+		return nil, fmt.Errorf("Failed to create tables: %w", err)
 	}
 
 	log.Println("Successfully connected to PostgreSQL")
@@ -85,23 +87,20 @@ func (r *PostgresRepository) BeginTx(ctx context.Context) (*TxWrapper, error) {
 		AccessMode:	pgx.ReadWrite,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("Failed to begin transaction: %w", err)
+		return nil, fmt.Errorf("%w: %v", ErrTxBeginFailed, err)
 	}
 	return &TxWrapper{tx: tx}, nil
 }
 
 // commit of transaction
 func (tw *TxWrapper) Commit(ctx context.Context) error {
-	if err := tw.tx.Commit(ctx); err != nil {
-		return fmt.Errorf("Failed to commit transaction: %w", err)
-	}
-	return nil
+	return tw.tx.Commit(ctx)
 }
 
 // rollback of transaction
 func (tw *TxWrapper) Rollback(ctx context.Context) error {
 	if err := tw.tx.Rollback(ctx); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
-		return fmt.Errorf("Failed to rollback transaction: %w", err)
+		return err
 	}
 	return nil
 }
@@ -118,22 +117,29 @@ func (r *PostgresRepository) WithTransaction(ctx context.Context, fn func(tx *Tx
 
 	defer func() {
 		if p := recover(); p != nil {
-			_ = tx.Rollback
+			if rollbackErr := tx.Rollback(ctx); rollbackErr != nil {
+				log.Printf("Failed to rollback transaction after panic: %w", rollbackErr)
+			} else {
+				log.Printf("Transaction rolled back successfully after panic")
+			}
 			panic(p)
 		}
 	}()
 
 	if err := fn(tx); err != nil {
 		if rollbackErr := tx.Rollback(ctx); rollbackErr != nil {
-			return fmt.Errorf("Transaction error: %w, rollback error: %v", err, rollbackErr)
+			log.Printf("Rollback failed after business error: %v", rollbackErr)
+		}else {
+			log.Printf("Transaction rolled back successfully after business error")
 		}
 		return err
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("Failed to commit transaction: %w", err)
+		return fmt.Errorf("%w: %v", ErrTxCommitFailed, err)
 	}
 
+	log.Printf("Transaction committed successfully")
 	return nil
 }
 

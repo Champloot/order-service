@@ -19,8 +19,8 @@ type Config struct {
 
 type DatabaseConfig struct {
 	URL					string
-	MaxConns          	int
-	MinConns         	int
+	MaxConns          	int32
+	MinConns         	int32
 	MaxConnLifetime   	time.Duration
 	MaxConnIdleTime   	time.Duration
 	HealthCheckPeriod 	time.Duration
@@ -60,8 +60,8 @@ func Load() (*Config, error) {
 	cfg := &Config{
 		Database: DatabaseConfig{
 			URL:               getEnv("POSTGRES_URL", "postgres://user:password@localhost:5432/orderservice?sslmode=disable"),
-			MaxConns:          getEnvAsInt("DB_MAX_CONNS", 20),
-			MinConns:          getEnvAsInt("DB_MIN_CONNS", 5),
+			MaxConns:          getEnvAsInt32("DB_MAX_CONNS", 20),
+			MinConns:          getEnvAsInt32("DB_MIN_CONNS", 5),
 			MaxConnLifetime:   getEnvAsDuration("DB_MAX_CONN_LIFETIME", time.Hour),
 			MaxConnIdleTime:   getEnvAsDuration("DB_MAX_CONN_IDLE_TIME", 30*time.Minute),
 			HealthCheckPeriod: getEnvAsDuration("DB_HEALTH_CHECK_PERIOD", time.Minute),
@@ -182,6 +182,15 @@ func getEnvAsInt(key string, defaultValue int) int {
 	if value, exists := os.LookupEnv(key); exists {
 		if intValue, err := strconv.Atoi(value); err == nil {
 			return intValue
+		}
+	}
+	return defaultValue
+}
+
+func getEnvAsInt32(key string, defaultValue int32) int32 {
+	if value, exists := os.LookupEnv(key); exists {
+		if intValue, err := strconv.ParseInt(value, 10, 32); err == nil {
+			return int32(intValue)
 		}
 	}
 	return defaultValue
