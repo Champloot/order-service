@@ -9,51 +9,51 @@ import (
 )
 
 type Config struct {
-	Database DatabaseConfig
-	Cache    CacheConfig
-	Kafka    KafkaConfig
-	HTTP     HTTPConfig
-	Consumer ConsumerConfig
-	App      AppConfig
+	Database	DatabaseConfig
+	Cache		CacheConfig
+	Kafka		KafkaConfig
+	HTTP		HTTPConfig
+	Consumer	ConsumerConfig
+	App			AppConfig
 }
 
 type DatabaseConfig struct {
-	URL string
-	MaxConns          int
-	MinConns          int
-	MaxConnLifetime   time.Duration
-	MaxConnIdleTime   time.Duration
-	HealthCheckPeriod time.Duration
+	URL					string
+	MaxConns          	int
+	MinConns         	int
+	MaxConnLifetime   	time.Duration
+	MaxConnIdleTime   	time.Duration
+	HealthCheckPeriod 	time.Duration
 }
 
 type CacheConfig struct {
-	Addr     string
-	Password string
-	DB       int
-	TTL      time.Duration
+	Addr		string
+	Password 	string
+	DB       	int
+	TTL      	time.Duration
 }
 
 type KafkaConfig struct {
-	Brokers []string
+	Brokers	[]string
 	Topic   string
-	GroupID string
+	GroupID	string
 }
 
 type HTTPConfig struct {
-	Addr string
+	Addr	string
 }
 
 type ConsumerConfig struct {
-	Timeout    time.Duration
-	MinBytes   int
-	MaxBytes   int
-	MaxWait    time.Duration
-	RetryDelay time.Duration
+	Timeout		time.Duration
+	MinBytes   	int
+	MaxBytes   	int
+	MaxWait    	time.Duration
+	RetryDelay 	time.Duration
 }
 
 type AppConfig struct {
-	Env      string
-	LogLevel string
+	Env			string
+	LogLevel 	string
 }
 
 func Load() (*Config, error) {
