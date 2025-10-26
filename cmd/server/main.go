@@ -27,7 +27,14 @@ func main() {
 	ctx := context.Background()
 
 	// db init
-	db, err := database.NewPostgresRepository(ctx, cfg.Database.URL)
+	db, err := database.NewPostgresRepository(ctx, database.DatabaseConfig{
+		URL:               cfg.Database.URL,
+		MaxConns:          cfg.Database.MaxConns,
+		MinConns:          cfg.Database.MinConns,
+		MaxConnLifetime:   cfg.Database.MaxConnLifetime,
+		MaxConnIdleTime:   cfg.Database.MaxConnIdleTime,
+		HealthCheckPeriod: cfg.Database.HealthCheckPeriod,
+	})
 	if err != nil {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
