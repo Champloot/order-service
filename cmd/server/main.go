@@ -13,6 +13,7 @@ import (
 	"order-service/internal/database"
 	"order-service/internal/http"
 	"order-service/internal/kafka"
+	"order-service/internal/ports"
 )
 
 func main() {
@@ -27,7 +28,8 @@ func main() {
 	ctx := context.Background()
 
 	// db init
-	db, err := database.NewPostgresRepository(ctx, database.DatabaseConfig{
+	var orderRepository ports.OrderRepository
+	orderRepository, err = database.NewPostgresRepository(ctx, database.DatabaseConfig{
 		URL:               cfg.Database.URL,
 		MaxConns:          cfg.Database.MaxConns,
 		MinConns:          cfg.Database.MinConns,
@@ -38,25 +40,27 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
-	defer db.Close()
+	defer orderRepository.(*database.PostgresRepository).Close()
 
 	// cache init
-	redisCache, err := cache.NewRedisCache(
+	var orderCache ports.OrderCache
+	orderCache, err = cache.NewRedisCache(
 		cfg.Cache.Addr,
 		cfg.Cache.Password,
 		cfg.Cache.DB,
-		cfg.Cache.TTL)
+		cfg.Cache.TTL,
+	)
 	if err != nil {
 		log.Fatalf("Failed to initialize Redis cache: %v", err)
 	}
-	defer redisCache.Close()
+	defer orderCache.Close()
 
 	// cache preload
-	orders, err := db.GetAllOrders(ctx)
+	orders, err := orderRepository.GetAllOrders(ctx)
 	if err != nil {
 		log.Printf("Failed to get orders for preloading cache: %v", err)
 	} else {
-		err = redisCache.PreloadOrders(ctx, orders)
+		err = orderCache.PreloadOrders(ctx, orders)
 		if err != nil {
 			log.Printf("Failed to preload cache: %v", err)
 		} else {
@@ -65,26 +69,28 @@ func main() {
 	}
 
 	// kafka consumer init
-	consumer := kafka.NewConsumer(
+	var orderConsumer ports.OrderConsumer
+	orderConsumer = kafka.NewConsumer(
 		cfg.Kafka.Brokers,
 		cfg.Kafka.Topic,
-		db,
+		orderRepository,
 		cfg.Consumer.Timeout,
 		cfg.Consumer.MinBytes,
 		cfg.Consumer.MaxBytes,
 		cfg.Consumer.MaxWait,
 		cfg.Consumer.RetryDelay,
 	)
-	defer consumer.Close()
+	defer orderConsumer.Close()
 
 	go func() {
 		// time for kafka load
 		time.Sleep(10 * time.Second)
-		consumer.Start(ctx)
+		orderConsumer.Start(ctx)
 	}()
 
 	// http server init
-	httpServer := http.NewServer(redisCache, db)
+	var httpServer ports.HTTPServer
+	httpServer = http.NewServer(orderCache, orderRepository)
 	go func() {
 		log.Printf("Starting HTTP server on %s", cfg.HTTP.Addr)
 		if err := httpServer.Start(cfg.HTTP.Addr); err != nil {

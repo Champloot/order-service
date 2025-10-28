@@ -7,20 +7,23 @@ import (
 	"time"
 
 	"order-service/internal/models"
+	"order-service/internal/ports"
 
 	"github.com/go-redis/redis/v8"
 )
 
+var _ ports.OrderCache = (*RedisCache)(nil)
+
 type RedisCache struct {
-	client *redis.Client
-	ttl    time.Duration
+	client	*redis.Client
+	ttl		time.Duration
 }
 
 func NewRedisCache(addr string, password string, db int, ttl time.Duration) (*RedisCache, error) {
 	client := redis.NewClient(&redis.Options{
-		Addr:     addr,
-		Password: password,
-		DB:       db,
+		Addr:		addr,
+		Password:	password,
+		DB:			db,
 	})
 
 	// Check connection
@@ -69,6 +72,15 @@ func (c *RedisCache) GetOrder(ctx context.Context, orderUID string) (*models.Ord
 	}
 
 	return &order, nil
+}
+
+func (c *RedisCache) DeleteOrder(ctx context.Context, orderUID string) error {
+	key := fmt.Sprintf("Order:%s", orderUID)
+	err := c.client.Del(ctx, key).Err()
+	if err != nil {
+		return fmt.Errorf("Failed to delete order from cache: %w", err)
+	}
+	return nil
 }
 
 func (c *RedisCache) PreloadOrders(ctx context.Context, orders []models.Order) error {

@@ -10,20 +10,21 @@ import (
 	"context"
 	"fmt"
 
-	"order-service/internal/cache"
-	"order-service/internal/database"
 	"order-service/internal/models"
+	"order-service/internal/ports"
 )
 
+var _ ports.HTTPServer = (*Server)(nil)
+
 type Server struct {
-	cache *cache.RedisCache
-	db    *database.PostgresRepository
+	cache		ports.OrderCache
+	repository	ports.OrderRepository
 }
 
-func NewServer(cache *cache.RedisCache, db *database.PostgresRepository) *Server {
+func NewServer(cache ports.OrderCache, repository ports.OrderRepository) *Server {
 	return &Server{
-		cache: cache,
-		db:    db,
+		cache:		cache,
+		repository:	repository,
 	}
 }
 
@@ -99,11 +100,11 @@ func (s *Server) getOrderHandler(w http.ResponseWriter, r *http.Request) {
 		// If not in cache, try database
 		log.Printf("Order %s not found in cache, checking database", orderUID)
 		dbStart := time.Now()
-		order, err = s.db.GetOrder(r.Context(), orderUID)
+		order, err = s.repository.GetOrder(r.Context(), orderUID)
 		dbDuration := time.Since(dbStart)
 
 		if err != nil {
-			if errors.Is(err, database.ErrOrderNotFound) {
+			if errors.Is(err, ports.ErrOrderNotFound) {
 				log.Printf("Order %s not found in database", orderUID)
 				http.Error(w, "Order not found", http.StatusNotFound)
 				return
@@ -128,12 +129,12 @@ func (s *Server) getOrderHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Add info about data source and time
 	response := map[string]interface{}{
-		"order":    order,
-		"source":   source,
+		"order":	order,
+		"source":	source,
 		"timing":	map[string]interface{}{
-			"total":    totalDuration.String(),
-			"fetch":    duration.String(),
-			"source":   source,
+			"total":	totalDuration.String(),
+			"fetch":	duration.String(),
+			"source":	source,
 		},
 	}
 
@@ -159,7 +160,7 @@ func (s *Server) bulkOperationsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := s.db.WithTransaction(r.Context(), func(tx *database.TxWrapper) error {
+	err := s.repository.WithTransaction(r.Context(), func(tx ports.OrderTx) error {
 		for i, operation := range request.Operations {
 			if i >= len(request.OrderIDs) {
 				break
@@ -169,12 +170,12 @@ func (s *Server) bulkOperationsHandler(w http.ResponseWriter, r *http.Request) {
 
 			switch operation {
 			case "delete":
-				if err := s.db.DeleteOrderTx(r.Context(), tx, orderID); err != nil {
+				if err := tx.DeleteOrder(r.Context(), orderID); err != nil {
 					return fmt.Errorf("Failed to get order %s: %w", orderID, err)
 				}
 				log.Printf("Order %s deleted in transaction", orderID)
 			case "get":
-				order, err := s.db.GetOrderTx(r.Context(), tx, orderID)
+				order, err := tx.GetOrder(r.Context(), orderID)
 				if err != nil {
 					return fmt.Errorf("Failed to get order %s: %w", orderID, err)
 				}
@@ -212,7 +213,7 @@ func (s *Server) benchmarkHandler(w http.ResponseWriter, r *http.Request) {
 	// Preload first 5
 	ctx := context.Background()
 	for _, id := range cachedOrderIDs {
-		if order, err := s.db.GetOrder(ctx, id); err == nil && order != nil {
+		if order, err := s.repository.GetOrder(ctx, id); err == nil && order != nil {
 			s.cache.SetOrder(ctx, order)
 		}
 	}
@@ -240,7 +241,7 @@ func (s *Server) benchmarkHandler(w http.ResponseWriter, r *http.Request) {
 	// test db orders
 	for _, id := range dbOnlyOrderIDs {
 		start := time.Now()
-		order, err := s.db.GetOrder(ctx, id)
+		order, err := s.repository.GetOrder(ctx, id)
 		duration := time.Since(start)
 
 		if err == nil && order != nil {

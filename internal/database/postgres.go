@@ -9,30 +9,22 @@ import (
 	"time"
 
 	"order-service/internal/models"
+	"order-service/internal/ports"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-var (
-	ErrOrderNotFound = errors.New("Order not found")
-	ErrTxBeginFailed = errors.New("Transaction begin failed")
-	ErrTxCommitFailed = errors.New("Transaction commit failed")
-)
-
-type Querier interface {
-	Query(ctx context.Context, sql string, args ...interface{}) (pgx.Rows, error)
-	QueryRow(ctx context.Context, sql string, args ...interface{}) pgx.Row
-	Exec(ctx context.Context, sql string, args ...interface{}) (pgconn.CommandTag, error)
-}
+var _ ports.OrderRepository = (*PostgresRepository)(nil)
+var _ ports.OrderTx = (*postgresTx)(nil)
 
 type PostgresRepository struct {
 	pool *pgxpool.Pool
 }
 
 // Wrapper for transactions with methods Commit/Rollback
-type TxWrapper struct {
+type postgresTx struct {
 	tx pgx.Tx
 }
 
@@ -81,35 +73,18 @@ func NewPostgresRepository(ctx context.Context, config DatabaseConfig) (*Postgre
 	return repo, nil
 }
 
-func (r *PostgresRepository) BeginTx(ctx context.Context) (*TxWrapper, error) {
+func (r *PostgresRepository) BeginTx(ctx context.Context) (ports.OrderTx, error) {
 	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{
 		IsoLevel:	pgx.ReadCommitted,
 		AccessMode:	pgx.ReadWrite,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrTxBeginFailed, err)
+		return nil, fmt.Errorf("Failed to begin transaction: %w", err)
 	}
-	return &TxWrapper{tx: tx}, nil
+	return &postgresTx{tx: tx}, nil
 }
 
-// commit of transaction
-func (tw *TxWrapper) Commit(ctx context.Context) error {
-	return tw.tx.Commit(ctx)
-}
-
-// rollback of transaction
-func (tw *TxWrapper) Rollback(ctx context.Context) error {
-	if err := tw.tx.Rollback(ctx); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
-		return err
-	}
-	return nil
-}
-
-func (tw *TxWrapper) GetQuerier() Querier {
-	return tw.tx
-}
-
-func (r *PostgresRepository) WithTransaction(ctx context.Context, fn func(tx *TxWrapper) error) error {
+func (r *PostgresRepository) WithTransaction(ctx context.Context, fn func(tx ports.OrderTx) error) error {
 	tx, err := r.BeginTx(ctx)
 	if err != nil {
 		return err
@@ -117,79 +92,81 @@ func (r *PostgresRepository) WithTransaction(ctx context.Context, fn func(tx *Tx
 
 	defer func() {
 		if p := recover(); p != nil {
-			if rollbackErr := tx.Rollback(ctx); rollbackErr != nil {
-				log.Printf("Failed to rollback transaction after panic: %w", rollbackErr)
-			} else {
-				log.Printf("Transaction rolled back successfully after panic")
-			}
+			_ = tx.Rollback(ctx)
 			panic(p)
 		}
 	}()
 
 	if err := fn(tx); err != nil {
 		if rollbackErr := tx.Rollback(ctx); rollbackErr != nil {
-			log.Printf("Rollback failed after business error: %v", rollbackErr)
-		}else {
-			log.Printf("Transaction rolled back successfully after business error")
+			return fmt.Errorf("Transaction error: %w, rollback error: %v", err, rollbackErr)
 		}
 		return err
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("%w: %v", ErrTxCommitFailed, err)
+		return fmt.Errorf("Failed to commit transaction: %w", err)
 	}
 
 	log.Printf("Transaction committed successfully")
 	return nil
 }
 
-func (r *PostgresRepository) createTables(ctx context.Context) error {
-	query := `
-		CREATE TABLE IF NOT EXISTS orders (
-			order_uid VARCHAR(255) PRIMARY KEY,
-			track_number VARCHAR(255),
-			entry VARCHAR(255),
-			delivery JSONB NOT NULL,
-			payment JSONB NOT NULL,
-			items JSONB NOT NULL,
-			locale VARCHAR(255),
-			internal_signature VARCHAR(255),
-			customer_id VARCHAR(255),
-			delivery_service VARCHAR(255),
-			shardkey VARCHAR(255),
-			sm_id INTEGER,
-			date_created TIMESTAMP WITH TIME ZONE,
-			oof_shard VARCHAR(255)
-		);
+func (r *PostgresRepository) SaveOrder(ctx context.Context, order *models.Order) error {
+	return r.saveOrder(ctx, r.pool, order)
+}
 
-		CREATE INDEX IF NOT EXISTS idx_orders_order_uid ON orders(order_uid);
-		CREATE INDEX IF NOT EXISTS idx_orders_date_created ON orders(date_created);
-		CREATE INDEX IF NOT EXISTS idx_orders_customer_id ON orders(customer_id);
-	`
+func (r *PostgresRepository) GetOrder(ctx context.Context, orderUID string) (*models.Order, error) {
+	return r.getOrder(ctx, r.pool, orderUID)
+}
 
-	_, err := r.pool.Exec(ctx, query)
-	if err != nil {
-		return fmt.Errorf("Failed to create tables: %w", err)
-	}
+func (r *PostgresRepository) GetAllOrders(ctx context.Context) ([]models.Order, error) {
+	return r.getAllOrders(ctx, r.pool)
+}
 
-	log.Println("Tables created or already exist")
-	return nil
+func (r *PostgresRepository) DeleteOrder(ctx context.Context, orderUID string) error {
+	return r.deleteOrder(ctx, r.pool, orderUID)
 }
 
 func (r *PostgresRepository) Close() {
 	r.pool.Close()
 }
 
-func (r *PostgresRepository) SaveOrder(ctx context.Context, order *models.Order) error {
-	return r.saveOrder(ctx, r.pool, order)
+// commit of transaction
+func (pt *postgresTx) Commit(ctx context.Context) error {
+	if err := pt.tx.Commit(ctx); err != nil {
+		return fmt.Errorf("Failed to commit transaction: %w", err)
+	}
+	return nil
+}
+
+// rollback of transaction
+func (pt *postgresTx) Rollback(ctx context.Context) error {
+	if err := pt.tx.Rollback(ctx); err != nil {
+		return fmt.Errorf("Failed to commit transaction: %w", err)
+	}
+	return nil
 }
 
 // with transaction
-func (r *PostgresRepository) SaveOrderTx(ctx context.Context, tx *TxWrapper, order *models.Order) error {
-	return r.saveOrder(ctx, tx.GetQuerier(), order)
+func (pt *postgresTx) SaveOrder(ctx context.Context, order *models.Order) error {
+	repo := &PostgresRepository{}
+	return repo.saveOrder(ctx, pt.tx, order)
 }
 
-func (r *PostgresRepository) saveOrder(ctx context.Context, querier Querier, order *models.Order) error {
+func (pt *postgresTx) GetOrder(ctx context.Context, orderUID string) (*models.Order, error) {
+	repo := &PostgresRepository{}	
+	return repo.getOrder(ctx, pt.tx, orderUID)
+}
+
+func (pt *postgresTx) DeleteOrder(ctx context.Context, orderUID string) error {
+	repo := &PostgresRepository{}
+	return repo.deleteOrder(ctx, pt.tx, orderUID)
+}
+
+func (pt *PostgresRepository) saveOrder(ctx context.Context, exec interface {
+	Exec(ctx context.Context, sql string, args ...interface{}) (pgconn.CommandTag, error)
+}, order *models.Order) error {
 	query := `
 		INSERT INTO orders (
 			order_uid, track_number, entry, delivery, payment, items,
@@ -228,7 +205,7 @@ func (r *PostgresRepository) saveOrder(ctx context.Context, querier Querier, ord
 		return fmt.Errorf("Failed to marshal items: %w", err)
 	}
 
-	_, err = querier.Exec(
+	_, err = exec.Exec(
 		ctx,
 		query,
 		order.OrderUID,
@@ -255,16 +232,11 @@ func (r *PostgresRepository) saveOrder(ctx context.Context, querier Querier, ord
 	return nil
 }
 
-func (r *PostgresRepository) GetOrder(ctx context.Context, orderUID string) (*models.Order, error) {
-	return r.getOrder(ctx, r.pool, orderUID)
-}
 
-// transaction version
-func (r *PostgresRepository) GetOrderTx(ctx context.Context, tx *TxWrapper, orderUID string) (*models.Order, error) {
-	return r.getOrder(ctx, tx.GetQuerier(), orderUID)
-}
 
-func (r *PostgresRepository) getOrder(ctx context.Context, querier Querier, orderUID string) (*models.Order, error) {
+func (r *PostgresRepository) getOrder(ctx context.Context, querier interface {
+	QueryRow(ctx context.Context, sql string, args ...interface{}) pgx.Row
+}, orderUID string) (*models.Order, error) {
 	query := `
 		SELECT
 			order_uid, track_number, entry, delivery, payment, items,
@@ -297,7 +269,7 @@ func (r *PostgresRepository) getOrder(ctx context.Context, querier Querier, orde
 
 	// use error.is
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, ErrOrderNotFound
+		return nil, ports.ErrOrderNotFound
 	} else if err != nil {
 		return nil, fmt.Errorf("Failed to get order: %w", err)
 	}
@@ -320,16 +292,10 @@ func (r *PostgresRepository) getOrder(ctx context.Context, querier Querier, orde
 	return &order, nil
 }
 
-func (r *PostgresRepository) GetAllOrders(ctx context.Context) ([]models.Order, error) {
-	return r.getAllOrders(ctx, r.pool)
-}
 
-// transaction version
-func (r *PostgresRepository) GetAllOrdersTx(ctx context.Context, tx *TxWrapper) ([]models.Order, error) {
-	return r.getAllOrders(ctx, tx.GetQuerier())
-}
-
-func (r *PostgresRepository) getAllOrders(ctx context.Context, querier Querier) ([]models.Order, error) {
+func (r *PostgresRepository) getAllOrders(ctx context.Context, querier interface {
+	Query(ctx context.Context, sql string, args ...interface{}) (pgx.Rows, error)
+}) ([]models.Order, error) {
 	query := `
 		SELECT
 			order_uid, track_number, entry, delivery, payment, items,
@@ -397,26 +363,56 @@ func (r *PostgresRepository) getAllOrders(ctx context.Context, querier Querier) 
 	return orders, nil
 }
 
-func (r *PostgresRepository) DeleteOrder(ctx context.Context, orderUID string) error {
-	return r.deleteOrder(ctx, r.pool, orderUID)
-}
 
-func (r *PostgresRepository) DeleteOrderTx(ctx context.Context, tx *TxWrapper, orderUID string) error {
-	return r.deleteOrder(ctx, tx.GetQuerier(), orderUID)
-}
 
-func (r *PostgresRepository) deleteOrder(ctx context.Context, querier Querier, orderUID string) error {
+func (r *PostgresRepository) deleteOrder(ctx context.Context, exec interface {
+	Exec(ctx context.Context, sql string, args ...interface{}) (pgconn.CommandTag, error)
+}, orderUID string) error {
 	query := `DELETE FROM orders WHERE order_uid = $1`
 
-	result, err := querier.Exec(ctx, query, orderUID)
+	result, err := exec.Exec(ctx, query, orderUID)
 	if err != nil {
 		return fmt.Errorf("Failed to delete order: %w", err)
 	}
 
 	if result.RowsAffected() == 0 {
-		return ErrOrderNotFound
+		return ports.ErrOrderNotFound
 	}
 
 	log.Printf("Order %s deleted successfully", orderUID)
+	return nil
+}
+
+
+func (r *PostgresRepository) createTables(ctx context.Context) error {
+	query := `
+		CREATE TABLE IF NOT EXISTS orders (
+			order_uid VARCHAR(255) PRIMARY KEY,
+			track_number VARCHAR(255),
+			entry VARCHAR(255),
+			delivery JSONB NOT NULL,
+			payment JSONB NOT NULL,
+			items JSONB NOT NULL,
+			locale VARCHAR(255),
+			internal_signature VARCHAR(255),
+			customer_id VARCHAR(255),
+			delivery_service VARCHAR(255),
+			shardkey VARCHAR(255),
+			sm_id INTEGER,
+			date_created TIMESTAMP WITH TIME ZONE,
+			oof_shard VARCHAR(255)
+		);
+
+		CREATE INDEX IF NOT EXISTS idx_orders_order_uid ON orders(order_uid);
+		CREATE INDEX IF NOT EXISTS idx_orders_date_created ON orders(date_created);
+		CREATE INDEX IF NOT EXISTS idx_orders_customer_id ON orders(customer_id);
+	`
+
+	_, err := r.pool.Exec(ctx, query)
+	if err != nil {
+		return fmt.Errorf("Failed to create tables: %w", err)
+	}
+
+	log.Println("Tables created or already exist")
 	return nil
 }

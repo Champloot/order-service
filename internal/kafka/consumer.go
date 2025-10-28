@@ -8,14 +8,16 @@ import (
 	"time"
 
 	"order-service/internal/models"
-	"order-service/internal/database"
+	"order-service/internal/ports"
 
 	"github.com/segmentio/kafka-go"
 )
 
+var _ ports.OrderConsumer = (*Consumer)(nil)
+
 type Consumer struct {
-	reader  	*kafka.Reader
-	db      	*database.PostgresRepository
+	reader		*kafka.Reader
+	repository	ports.OrderRepository
 	timeout		time.Duration
 	retryDelay	time.Duration
 }
@@ -23,7 +25,7 @@ type Consumer struct {
 func NewConsumer(
 	brokers []string,
 	topic string,
-	db *database.PostgresRepository,
+	repository ports.OrderRepository,
 	timeout time.Duration,
 	minBytes int,
 	maxBytes int,
@@ -41,7 +43,7 @@ func NewConsumer(
 
 	return &Consumer{
 		reader:  	reader,
-		db:      	db,
+		repository:	repository,
 		timeout: 	timeout,
 		retryDelay:	retryDelay,
 	}
@@ -92,8 +94,8 @@ func (c *Consumer) processMessage(ctx context.Context, data []byte) error {
 	log.Printf("Processing order: %s", order.OrderUID)
 
 	// save
-	err := c.db.WithTransaction(ctx, func(tx *database.TxWrapper) error {
-		if err := c.db.SaveOrderTx(ctx, tx, &order); err != nil {
+	err := c.repository.WithTransaction(ctx, func(tx ports.OrderTx) error {
+		if err := tx.SaveOrder(ctx, &order); err != nil {
 			return fmt.Errorf("Failed to save order to database: %w", err)
 		}
 
