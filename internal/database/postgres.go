@@ -17,7 +17,7 @@ import (
 )
 
 var _ ports.OrderRepository = (*PostgresRepository)(nil)
-var _ ports.OrderTx = (*postgresTx)(nil)
+// var _ ports.OrderTx = (*postgresTx)(nil)
 
 type PostgresRepository struct {
 	pool *pgxpool.Pool
@@ -25,7 +25,8 @@ type PostgresRepository struct {
 
 // Wrapper for transactions with methods Commit/Rollback
 type postgresTx struct {
-	tx pgx.Tx
+	tx		pgx.Tx
+	repo	*PostgresRepository
 }
 
 type DatabaseConfig struct {
@@ -81,7 +82,7 @@ func (r *PostgresRepository) BeginTx(ctx context.Context) (ports.OrderTx, error)
 	if err != nil {
 		return nil, fmt.Errorf("Failed to begin transaction: %w", err)
 	}
-	return &postgresTx{tx: tx}, nil
+	return &postgresTx{tx: tx, repo: r}, nil
 }
 
 func (r *PostgresRepository) WithTransaction(ctx context.Context, fn func(tx ports.OrderTx) error) error {
@@ -150,18 +151,15 @@ func (pt *postgresTx) Rollback(ctx context.Context) error {
 
 // with transaction
 func (pt *postgresTx) SaveOrder(ctx context.Context, order *models.Order) error {
-	repo := &PostgresRepository{}
-	return repo.saveOrder(ctx, pt.tx, order)
+	return pt.repo.saveOrder(ctx, pt.tx, order)
 }
 
 func (pt *postgresTx) GetOrder(ctx context.Context, orderUID string) (*models.Order, error) {
-	repo := &PostgresRepository{}	
-	return repo.getOrder(ctx, pt.tx, orderUID)
+	return pt.repo.getOrder(ctx, pt.tx, orderUID)
 }
 
 func (pt *postgresTx) DeleteOrder(ctx context.Context, orderUID string) error {
-	repo := &PostgresRepository{}
-	return repo.deleteOrder(ctx, pt.tx, orderUID)
+	return pt.repo.deleteOrder(ctx, pt.tx, orderUID)
 }
 
 func (pt *PostgresRepository) saveOrder(ctx context.Context, exec interface {

@@ -82,7 +82,7 @@ func (c *Consumer) processMessage(ctx context.Context, data []byte) error {
 	var order models.Order
 	if err := json.Unmarshal(data, &order); err != nil {
 		log.Printf("Failed to unmarshal order: %v", err)
-		return fmt.Errorf("Failed to unmarshal order: %v", err)
+		return fmt.Errorf("Failed to unmarshal order: %w", err)
 	}
 
 	// Data validation
