@@ -143,7 +143,7 @@ func (pt *postgresTx) Commit(ctx context.Context) error {
 // rollback of transaction
 func (pt *postgresTx) Rollback(ctx context.Context) error {
 	if err := pt.tx.Rollback(ctx); err != nil {
-		return fmt.Errorf("Failed to commit transaction: %w", err)
+		return fmt.Errorf("Failed to rollback transaction: %w", err)
 	}
 	return nil
 }

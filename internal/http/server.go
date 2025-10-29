@@ -171,7 +171,7 @@ func (s *Server) bulkOperationsHandler(w http.ResponseWriter, r *http.Request) {
 			switch operation {
 			case "delete":
 				if err := tx.DeleteOrder(r.Context(), orderID); err != nil {
-					return fmt.Errorf("Failed to get order %s: %w", orderID, err)
+					return fmt.Errorf("Failed to delete order %s: %w", orderID, err)
 				}
 				log.Printf("Order %s deleted in transaction", orderID)
 			case "get":
