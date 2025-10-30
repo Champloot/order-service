@@ -75,7 +75,7 @@ func (c *RedisCache) GetOrder(ctx context.Context, orderUID string) (*models.Ord
 }
 
 func (c *RedisCache) DeleteOrder(ctx context.Context, orderUID string) error {
-	key := fmt.Sprintf("Order:%s", orderUID)
+	key := fmt.Sprintf("order:%s", orderUID)
 	err := c.client.Del(ctx, key).Err()
 	if err != nil {
 		return fmt.Errorf("Failed to delete order from cache: %w", err)
