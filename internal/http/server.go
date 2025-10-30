@@ -151,7 +151,7 @@ func (s *Server) bulkOperationsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var request struct {
-		Operations	[]string `json:"opertaions"` // get, delete ...
+		Operations	[]string `json:"operations"` // get, delete ...
 		OrderIDs	[]string `json:"order_ids"`
 	}
 
@@ -188,7 +188,7 @@ func (s *Server) bulkOperationsHandler(w http.ResponseWriter, r *http.Request) {
 	})
 
 	if err != nil {
-		log.Printf("Bulk opertaions failed: %v", err)
+		log.Printf("Bulk operations failed: %v", err)
 		http.Error(w, fmt.Sprintf("Bulk opertaions failed: %v", err), http.StatusInternalServerError)
 		return
 	}
