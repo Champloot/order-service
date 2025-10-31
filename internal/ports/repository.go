@@ -5,6 +5,8 @@ import (
 	"order-service/internal/models"
 )
 
+//go:generate mockgen -source=repository.go -destination=../mocks/mock_repository.go -package=mocks
+
 // For default operations
 type OrderRepository interface {
 	// Basic operations

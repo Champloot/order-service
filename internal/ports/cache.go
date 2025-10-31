@@ -5,6 +5,8 @@ import (
 	"order-service/internal/models"
 )
 
+//go:generate mockgen -source=cache.go -destination=../mocks/mock_cache.go -package=mocks
+
 type OrderCache interface {
 	SetOrder(ctx context.Context, order *models.Order) error
 	GetOrder(ctx context.Context, orderUID string) (*models.Order, error)

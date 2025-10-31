@@ -3,12 +3,12 @@ package http
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
 	"time"
 	"context"
-	"fmt"
 
 	"order-service/internal/models"
 	"order-service/internal/ports"
@@ -19,30 +19,40 @@ var _ ports.HTTPServer = (*Server)(nil)
 type Server struct {
 	cache		ports.OrderCache
 	repository	ports.OrderRepository
+	mux			*http.ServeMux
 }
 
 func NewServer(cache ports.OrderCache, repository ports.OrderRepository) *Server {
-	return &Server{
+	server := &Server{
 		cache:		cache,
 		repository:	repository,
+		mux:		http.NewServeMux(),
 	}
+	server.setupRoutes()
+	return server
+
 }
 
-func (s *Server) Start(addr string) error {
-	mux := http.NewServeMux()
-
+func (s *Server) setupRoutes() {
 	// API endpoints
-	mux.HandleFunc("/api/health", s.healthHandler)
-	mux.HandleFunc("/api/order/", s.getOrderHandler)
-	mux.HandleFunc("/api/benchmark", s.benchmarkHandler)
-	mux.HandleFunc("/api/orders/bulk", s.bulkOperationsHandler)
+	s.mux.HandleFunc("/api/health", s.healthHandler)
+	s.mux.HandleFunc("/api/order/", s.getOrderHandler)
+	s.mux.HandleFunc("/api/benchmark", s.benchmarkHandler)
+	s.mux.HandleFunc("/api/orders/bulk", s.bulkOperationsHandler)
 
 	// Serve static files
 	fs := http.FileServer(http.Dir("./web/static"))
-	mux.Handle("/", fs)
+	s.mux.Handle("/", fs)
 
+}
+
+func (s *Server) GetHandler() http.Handler {
+	return s.mux
+}
+
+func (s *Server) Start(addr string) error {
 	log.Printf("Starting HTTP server on %s", addr)
-	return http.ListenAndServe(addr, mux)
+	return http.ListenAndServe(addr, s.mux)
 }
 
 func (s *Server) healthHandler(w http.ResponseWriter, r *http.Request) {
