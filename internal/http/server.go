@@ -199,7 +199,7 @@ func (s *Server) bulkOperationsHandler(w http.ResponseWriter, r *http.Request) {
 
 	if err != nil {
 		log.Printf("Bulk operations failed: %v", err)
-		http.Error(w, fmt.Sprintf("Bulk opertaions failed: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Bulk operations failed: %v", err), http.StatusInternalServerError)
 		return
 	}
 
