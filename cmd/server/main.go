@@ -11,7 +11,7 @@ import (
 	"order-service/config"
 	"order-service/internal/cache"
 	"order-service/internal/database"
-	"order-service/internal/http"
+	"order-service/internal/httphandler"
 	"order-service/internal/kafka"
 	"order-service/internal/ports"
 )
