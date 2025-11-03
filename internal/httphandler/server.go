@@ -103,12 +103,19 @@ func (s *Server) getOrderHandler(w http.ResponseWriter, r *http.Request) {
 
 	if err != nil {
 		log.Printf("Error accessing cache: %v", err)
-	} else if order != nil {
+		order = nil
+	}
+
+	if err == nil && order != nil {
 		source = "cache"
 		duration = cacheDuration
 	} else {
-		// If not in cache, try database
-		log.Printf("Order %s not found in cache, checking database", orderUID)
+		if err != nil {
+			log.Printf("Cache unavailable for order %s, checking database", orderUID)
+		} else {
+			log.Printf("Order %s not found in cache, checking database", orderUID)
+		}
+		
 		dbStart := time.Now()
 		order, err = s.repository.GetOrder(r.Context(), orderUID)
 		dbDuration := time.Since(dbStart)
@@ -206,7 +213,7 @@ func (s *Server) bulkOperationsHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string {
 		"status":	"success",
-		"message":	"Bulk opertaios completed successfully",
+		"message":	"Bulk operations completed successfully",
 	})
 }
 

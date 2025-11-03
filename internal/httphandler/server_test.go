@@ -1,10 +1,10 @@
 package httphandler_test
 
 import (
-	// "bytes"
-	// "context"
+	"bytes"
+	"context"
 	"encoding/json"
-	// "fmt"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	// "strings"
@@ -221,4 +221,122 @@ func TestGetOrderHandler_NotFound(t *testing.T) {
 
 	assert.Equal(t, http.StatusNotFound, rr.Code)
 	assert.Contains(t, rr.Body.String(), "Order not found")
+}
+
+func TestGetOrderHandler_CacheError(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockCache := mocks.NewMockOrderCache(ctrl)
+	mockRepo := mocks.NewMockOrderRepository(ctrl)
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+
+	mockCache.EXPECT().
+		GetOrder(gomock.Any(), "test-order-789").
+		Return(nil, fmt.Errorf("cache connection failed")).
+		Times(1)
+
+	order := &models.Order{
+		OrderUID:		"test-order-789",
+		TrackNumber:	"WBILMTESTTRACK789",
+		Entry:			"WBIL",
+		DateCreated:	time.Now(),
+	}
+
+	mockRepo.EXPECT().
+		GetOrder(gomock.Any(), "test-order-789").
+		Return(order, nil).
+		Times(1)
+
+	mockCache.EXPECT().
+		SetOrder(gomock.Any(), order).
+		DoAndReturn(func(ctx interface{}, order interface{}) error {
+			defer wg.Done()
+			return nil
+		}).
+		Times(1)
+
+
+	server := httphandler.NewServer(mockCache, mockRepo)
+	handler := server.GetHandler()
+	
+	req, err := http.NewRequest("GET", "/api/order/test-order-789", nil)
+	require.NoError(t, err)
+
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	wg.Wait()
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+
+	var response map[string]interface{}
+	err = json.Unmarshal(rr.Body.Bytes(), &response)
+	require.NoError(t, err)
+
+	assert.Equal(t, "database", response["source"])
+}
+
+func TestBulkOperationsHandler_Success(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockCache := mocks.NewMockOrderCache(ctrl)
+	mockRepo := mocks.NewMockOrderRepository(ctrl)
+	mockTx := mocks.NewMockOrderTx(ctrl)
+
+	order := &models.Order{
+		OrderUID:    "order-2",
+		TrackNumber: "TRACK-002",
+		DateCreated: time.Now(),
+	}
+
+	mockRepo.EXPECT().
+		WithTransaction(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(ctx context.Context, fn func(tx ports.OrderTx) error) error {
+			if err := fn(mockTx); err != nil {
+				return err
+			}
+			return nil
+		}).
+		Times(1)
+
+	mockTx.EXPECT().
+		DeleteOrder(gomock.Any(), "order-1").
+		Return(nil).
+		Times(1)
+
+	mockTx.EXPECT().
+		GetOrder(gomock.Any(), "order-2").
+		Return(order, nil).
+		Times(1)
+
+	server := httphandler.NewServer(mockCache, mockRepo)
+	handler := server.GetHandler()
+
+	requestBody := map[string]interface{}{
+		"operations": []string{"delete", "get"},
+		"order_ids":  []string{"order-1", "order-2"},
+	}
+
+	body, err := json.Marshal(requestBody)
+	require.NoError(t, err)
+
+	req, err := http.NewRequest("POST", "/api/orders/bulk", bytes.NewBuffer(body))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+
+	var response map[string]string
+	err = json.Unmarshal(rr.Body.Bytes(), &response)
+	require.NoError(t, err)
+
+	assert.Equal(t, "success", response["status"])
+	assert.Equal(t, "Bulk operations completed successfully", response["message"])
 }
