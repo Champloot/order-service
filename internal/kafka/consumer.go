@@ -66,14 +66,14 @@ func (c *Consumer) Start(ctx context.Context) {
 
 			log.Printf("Received message: %s", string(msg.Value))
 
-			if err := c.processMessage(ctx, msg.Value); err != nil {
+			if err := c.ProcessMessage(ctx, msg.Value); err != nil {
 				log.Printf("Error processing message: %v", err)
 			}
 		}
 	}
 }
 
-func (c *Consumer) processMessage(ctx context.Context, data []byte) error {
+func (c *Consumer) ProcessMessage(ctx context.Context, data []byte) error {
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
