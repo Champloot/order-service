@@ -90,7 +90,7 @@ func main() {
 
 	// http server init
 	var httpServer ports.HTTPServer
-	httpServer = http.NewServer(orderCache, orderRepository)
+	httpServer = httphandler.NewServer(orderCache, orderRepository)
 	go func() {
 		log.Printf("Starting HTTP server on %s", cfg.HTTP.Addr)
 		if err := httpServer.Start(cfg.HTTP.Addr); err != nil {
