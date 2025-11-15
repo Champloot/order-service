@@ -9,6 +9,7 @@ import (
 
 	"order-service/internal/models"
 	"order-service/internal/ports"
+	"order-service/internal/validation"
 
 	"github.com/segmentio/kafka-go"
 )
@@ -20,6 +21,7 @@ type Consumer struct {
 	repository	ports.OrderRepository
 	timeout		time.Duration
 	retryDelay	time.Duration
+	validator	validation.Validator
 }
 
 func NewConsumer(
@@ -31,6 +33,7 @@ func NewConsumer(
 	maxBytes int,
 	maxWait time.Duration,
 	retryDelay time.Duration,
+	validator validation.Validator,
 ) *Consumer {
 	reader := kafka.NewReader(kafka.ReaderConfig{
 		Brokers:     brokers,
@@ -46,6 +49,7 @@ func NewConsumer(
 		repository:	repository,
 		timeout: 	timeout,
 		retryDelay:	retryDelay,
+		validator:	validator,
 	}
 }
 
@@ -86,12 +90,13 @@ func (c *Consumer) ProcessMessage(ctx context.Context, data []byte) error {
 	}
 
 	// Data validation
-	if order.OrderUID == "" {
-		log.Printf("Order UID is empty")
-		return fmt.Errorf("Order UID is required")
+	validationResult := c.validator.Validate(&order)
+	if !validationResult.IsValid {
+		log.Printf("Order validation failed: %+v", validationResult.Errors)
+		return fmt.Errorf("order validation failed: %d errors", len(validationResult.Errors))
 	}
 
-	log.Printf("Processing order: %s", order.OrderUID)
+	log.Printf("Order %s passed validation, processing...", order.OrderUID)
 
 	// save
 	err := c.repository.WithTransaction(ctx, func(tx ports.OrderTx) error {

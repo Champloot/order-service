@@ -4,12 +4,12 @@ import (
 	"encoding/json"
 	"testing"
 	"time"
-	// "errors"
 
 	"order-service/internal/kafka"
 	"order-service/internal/models"
 	"order-service/internal/mocks"
 	"order-service/internal/ports"
+	"order-service/internal/validation"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -21,6 +21,12 @@ func TestConsumer_ProcessMessage_Success(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockRepo := mocks.NewMockOrderRepository(ctrl)
+    mockValidator := mocks.NewMockValidator(ctrl)
+
+    mockValidator.EXPECT().
+        Validate(gomock.Any()).
+        Return(validation.ValidationResult{IsValid: true, Errors: nil}).
+        Times(1)
 
 	order := &models.Order{
 		OrderUID:		"test-order-123",
@@ -46,6 +52,7 @@ func TestConsumer_ProcessMessage_Success(t *testing.T) {
 		10*1024*1024,
 		1*time.Second,
 		5*time.Second,
+		mockValidator,
 	)
 
 	err = consumer.ProcessMessage(context.Background(), orderJSON)
@@ -57,6 +64,8 @@ func TestConsumer_ProcessMessage_InvalidJSON(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockRepo := mocks.NewMockOrderRepository(ctrl)
+    mockValidator := mocks.NewMockValidator(ctrl)
+
 
 	consumer := kafka.NewConsumer(
 		[]string{"localhost:9092"},
@@ -67,6 +76,7 @@ func TestConsumer_ProcessMessage_InvalidJSON(t *testing.T) {
 		10*1024*1024,
 		1*time.Second,
 		5*time.Second,
+        mockValidator,
 	)
 
 	invalidJSON := []byte(`{"invalid": json`)
@@ -81,17 +91,33 @@ func TestConsumer_ProcessMessage_EmptyOrderUID(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockRepo := mocks.NewMockOrderRepository(ctrl)
+    mockValidator := mocks.NewMockValidator(ctrl)
 
-	consumer := kafka.NewConsumer(
-		[]string{"localhost:9092"},
-		"orders",
-		mockRepo,
-		10*time.Second,
-		10240,
-		10*1024*1024,
-		1*time.Second,
-		5*time.Second,
-	)
+
+	  mockValidator.EXPECT().
+        Validate(gomock.Any()).
+        Return(validation.ValidationResult{
+            IsValid: false,
+            Errors: []validation.ValidationError{
+                {
+                    Field:   "order_uid",
+                    Message: "order UID is required",
+                },
+            },
+        }).
+        Times(1)
+
+    consumer := kafka.NewConsumer(
+        []string{"localhost:9092"},
+        "orders",
+        mockRepo,
+        10*time.Second,
+        10240,
+        10*1024*1024,
+        1*time.Second,
+        5*time.Second,
+        mockValidator,
+    )
 
 	order := &models.Order{
 		OrderUID: "",
@@ -101,7 +127,7 @@ func TestConsumer_ProcessMessage_EmptyOrderUID(t *testing.T) {
 
 	err = consumer.ProcessMessage(context.Background(), orderJSON)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "Order UID is required")
+	assert.Contains(t, err.Error(), "order validation failed")
 }
 
 func TestConsumer_ProcessMessage_TransactionError(t *testing.T) {
@@ -109,6 +135,12 @@ func TestConsumer_ProcessMessage_TransactionError(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockRepo := mocks.NewMockOrderRepository(ctrl)
+    mockValidator := mocks.NewMockValidator(ctrl)
+
+    mockValidator.EXPECT().
+        Validate(gomock.Any()).
+        Return(validation.ValidationResult{IsValid: true, Errors: nil}).
+        Times(1)
 
 	order := &models.Order{
 		OrderUID:    "test-order-456",
@@ -134,6 +166,7 @@ func TestConsumer_ProcessMessage_TransactionError(t *testing.T) {
 		10*1024*1024,
 		1*time.Second,
 		5*time.Second,
+        mockValidator,
 	)
 
 	err = consumer.ProcessMessage(context.Background(), orderJSON)
@@ -146,6 +179,12 @@ func TestConsumer_ProcessMessage_SaveErrorInTransaction(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockRepo := mocks.NewMockOrderRepository(ctrl)
+    mockValidator := mocks.NewMockValidator(ctrl)
+
+    mockValidator.EXPECT().
+        Validate(gomock.Any()).
+        Return(validation.ValidationResult{IsValid: true, Errors: nil}).
+        Times(1)
 
 	order := &models.Order{
 		OrderUID:    "test-order-789",
@@ -173,6 +212,7 @@ func TestConsumer_ProcessMessage_SaveErrorInTransaction(t *testing.T) {
 		10*1024*1024,
 		1*time.Second,
 		5*time.Second,
+        mockValidator,
 	)
 
 	err = consumer.ProcessMessage(context.Background(), orderJSON)

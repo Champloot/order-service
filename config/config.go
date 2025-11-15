@@ -15,6 +15,7 @@ type Config struct {
 	HTTP		HTTPConfig
 	Consumer	ConsumerConfig
 	App			AppConfig
+    Validation	ValidationConfig
 }
 
 type DatabaseConfig struct {
@@ -56,6 +57,28 @@ type AppConfig struct {
 	LogLevel 	string
 }
 
+type ValidationConfig struct {
+    Enabled				bool
+    RequireOrderUID		bool
+    RequireTrackNumber	bool
+    RequireEntry		bool
+    RequireCustomerID	bool
+    RequireDelivery		bool
+    RequirePayment		bool
+    RequireItems		bool
+    
+    ValidateEmail	bool
+    ValidatePhone	bool
+    ValidateAmounts	bool
+    ValidateDates	bool
+    
+    MaxItems		int
+    MinAmount		int
+    MaxAmount		int
+    MaxDateFuture	time.Duration
+    MaxDatePast		time.Duration
+}
+
 func Load() (*Config, error) {
 	cfg := &Config{
 		Database: DatabaseConfig{
@@ -90,6 +113,25 @@ func Load() (*Config, error) {
 		App: AppConfig{
 			Env:      getEnv("APP_ENV", "development"),
 			LogLevel: getEnv("LOG_LEVEL", "info"),
+		},
+		Validation: ValidationConfig{
+	    Enabled:           getEnvAsBool("VALIDATION_ENABLED", true),
+	    RequireOrderUID:   getEnvAsBool("VALIDATION_REQUIRE_ORDER_UID", true),
+	    RequireTrackNumber: getEnvAsBool("VALIDATION_REQUIRE_TRACK_NUMBER", true),
+	    RequireEntry:      getEnvAsBool("VALIDATION_REQUIRE_ENTRY", true),
+	    RequireCustomerID: getEnvAsBool("VALIDATION_REQUIRE_CUSTOMER_ID", true),
+	    RequireDelivery:   getEnvAsBool("VALIDATION_REQUIRE_DELIVERY", true),
+	    RequirePayment:    getEnvAsBool("VALIDATION_REQUIRE_PAYMENT", true),
+	    RequireItems:      getEnvAsBool("VALIDATION_REQUIRE_ITEMS", true),
+	    ValidateEmail:     getEnvAsBool("VALIDATION_VALIDATE_EMAIL", true),
+	    ValidatePhone:     getEnvAsBool("VALIDATION_VALIDATE_PHONE", true),
+	    ValidateAmounts:   getEnvAsBool("VALIDATION_VALIDATE_AMOUNTS", true),
+	    ValidateDates:     getEnvAsBool("VALIDATION_VALIDATE_DATES", true),
+	    MaxItems:          getEnvAsInt("VALIDATION_MAX_ITEMS", 100),
+	    MinAmount:         getEnvAsInt("VALIDATION_MIN_AMOUNT", 0),
+	    MaxAmount:         getEnvAsInt("VALIDATION_MAX_AMOUNT", 100000000),
+	    MaxDateFuture:     getEnvAsDuration("VALIDATION_MAX_DATE_FUTURE", 24*time.Hour),
+	    MaxDatePast:       getEnvAsDuration("VALIDATION_MAX_DATE_PAST", 365*24*time.Hour),
 		},
 	}
 
@@ -208,6 +250,15 @@ func getEnvAsDuration(key string, defaultValue time.Duration) time.Duration {
 func getEnvAsSlice(key string, defaultValue []string, separator string) []string {
 	if value, exists := os.LookupEnv(key); exists {
 		return strings.Split(value, separator)
+	}
+	return defaultValue
+}
+
+func getEnvAsBool(key string, defaultValue bool) bool {
+	if value, exists := os.LookupEnv(key); exists {
+		if boolValue, err := strconv.ParseBool(value); err == nil {
+			return boolValue
+		}
 	}
 	return defaultValue
 }

@@ -14,6 +14,7 @@ import (
 	"order-service/internal/httphandler"
 	"order-service/internal/kafka"
 	"order-service/internal/ports"
+	"order-service/internal/validation"
 )
 
 func main() {
@@ -68,6 +69,34 @@ func main() {
 		}
 	}
 
+	var orderValidator validation.Validator
+	if cfg.Validation.Enabled {
+		orderValidator = validation.NewOrderValidator(validation.ValidationConfig{
+			RequireOrderUID:    cfg.Validation.RequireOrderUID,
+			RequireTrackNumber: cfg.Validation.RequireTrackNumber,
+			RequireEntry:       true,
+			RequireCustomerID:  true,
+			RequireDelivery:    true,
+			RequirePayment:     true,
+			RequireItems:       true,
+			ValidateEmail:      true,
+			ValidatePhone:      true,
+			ValidateAmounts:    true,
+			ValidateDates:      true,
+			MaxItems:           cfg.Validation.MaxItems,
+			MinAmount:          cfg.Validation.MinAmount,
+			MaxAmount:          cfg.Validation.MaxAmount,
+			MaxDateFuture:      cfg.Validation.MaxDateFuture,
+			MaxDatePast:        cfg.Validation.MaxDatePast,
+		})
+		log.Println("Order validation enabled")
+	} else {
+		orderValidator = validation.NewOrderValidator(validation.ValidationConfig{
+			RequireOrderUID: true,
+		})
+		log.Println("Order validation disabled (only basic checks)")
+	}
+
 	// kafka consumer init
 	var orderConsumer ports.OrderConsumer
 	orderConsumer = kafka.NewConsumer(
@@ -79,6 +108,7 @@ func main() {
 		cfg.Consumer.MaxBytes,
 		cfg.Consumer.MaxWait,
 		cfg.Consumer.RetryDelay,
+		orderValidator,
 	)
 	defer orderConsumer.Close()
 
