@@ -1,44 +1,58 @@
-package http
+package httphandler
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
 	"time"
 	"context"
 
-	"order-service/internal/cache"
-	"order-service/internal/database"
 	"order-service/internal/models"
+	"order-service/internal/ports"
 )
 
+var _ ports.HTTPServer = (*Server)(nil)
+
 type Server struct {
-	cache *cache.RedisCache
-	db    *database.PostgresRepository
+	cache		ports.OrderCache
+	repository	ports.OrderRepository
+	mux			*http.ServeMux
 }
 
-func NewServer(cache *cache.RedisCache, db *database.PostgresRepository) *Server {
-	return &Server{
-		cache: cache,
-		db:    db,
+func NewServer(cache ports.OrderCache, repository ports.OrderRepository) *Server {
+	server := &Server{
+		cache:		cache,
+		repository:	repository,
+		mux:		http.NewServeMux(),
 	}
+	server.setupRoutes()
+	return server
+
 }
 
-func (s *Server) Start(addr string) error {
-	mux := http.NewServeMux()
-
+func (s *Server) setupRoutes() {
 	// API endpoints
-	mux.HandleFunc("/api/health", s.healthHandler)
-	mux.HandleFunc("/api/order/", s.getOrderHandler)
-	mux.HandleFunc("/api/benchmark", s.benchmarkHandler) // Новый эндпоинт для бенчмарка
+	s.mux.HandleFunc("/api/health", s.healthHandler)
+	s.mux.HandleFunc("/api/order/", s.getOrderHandler)
+	s.mux.HandleFunc("/api/benchmark", s.benchmarkHandler)
+	s.mux.HandleFunc("/api/orders/bulk", s.bulkOperationsHandler)
 
 	// Serve static files
 	fs := http.FileServer(http.Dir("./web/static"))
-	mux.Handle("/", fs)
+	s.mux.Handle("/", fs)
 
+}
+
+func (s *Server) GetHandler() http.Handler {
+	return s.mux
+}
+
+func (s *Server) Start(addr string) error {
 	log.Printf("Starting HTTP server on %s", addr)
-	return http.ListenAndServe(addr, mux)
+	return http.ListenAndServe(addr, s.mux)
 }
 
 func (s *Server) healthHandler(w http.ResponseWriter, r *http.Request) {
@@ -89,25 +103,31 @@ func (s *Server) getOrderHandler(w http.ResponseWriter, r *http.Request) {
 
 	if err != nil {
 		log.Printf("Error accessing cache: %v", err)
-	} else if order != nil {
+		order = nil
+	}
+
+	if err == nil && order != nil {
 		source = "cache"
 		duration = cacheDuration
 	} else {
-		// If not in cache, try database
-		log.Printf("Order %s not found in cache, checking database", orderUID)
+		if err != nil {
+			log.Printf("Cache unavailable for order %s, checking database", orderUID)
+		} else {
+			log.Printf("Order %s not found in cache, checking database", orderUID)
+		}
+		
 		dbStart := time.Now()
-		order, err = s.db.GetOrder(r.Context(), orderUID)
+		order, err = s.repository.GetOrder(r.Context(), orderUID)
 		dbDuration := time.Since(dbStart)
 
 		if err != nil {
+			if errors.Is(err, ports.ErrOrderNotFound) {
+				log.Printf("Order %s not found in database", orderUID)
+				http.Error(w, "Order not found", http.StatusNotFound)
+				return
+			}
 			log.Printf("Error retrieving order from database: %v", err)
 			http.Error(w, "Error retrieving order", http.StatusInternalServerError)
-			return
-		}
-
-		if order == nil {
-			log.Printf("Order %s not found in database", orderUID)
-			http.Error(w, "Order not found", http.StatusNotFound)
 			return
 		}
 
@@ -126,12 +146,12 @@ func (s *Server) getOrderHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Add info about data source and time
 	response := map[string]interface{}{
-		"order":    order,
-		"source":   source,
-		"timing": map[string]interface{}{
-			"total":    totalDuration.String(),
-			"fetch":    duration.String(),
-			"source":   source,
+		"order":	order,
+		"source":	source,
+		"timing":	map[string]interface{}{
+			"total":	totalDuration.String(),
+			"fetch":	duration.String(),
+			"source":	source,
 		},
 	}
 
@@ -141,7 +161,62 @@ func (s *Server) getOrderHandler(w http.ResponseWriter, r *http.Request) {
 	log.Printf("Order %s fetched from %s in %s (fetch: %s)", orderUID, source, totalDuration.String(), duration.String())
 }
 
-// New benchmark handler
+func (s *Server) bulkOperationsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var request struct {
+		Operations	[]string `json:"operations"` // get, delete ...
+		OrderIDs	[]string `json:"order_ids"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	err := s.repository.WithTransaction(r.Context(), func(tx ports.OrderTx) error {
+		for i, operation := range request.Operations {
+			if i >= len(request.OrderIDs) {
+				break
+			}
+
+			orderID := request.OrderIDs[i]
+
+			switch operation {
+			case "delete":
+				if err := tx.DeleteOrder(r.Context(), orderID); err != nil {
+					return fmt.Errorf("Failed to delete order %s: %w", orderID, err)
+				}
+				log.Printf("Order %s deleted in transaction", orderID)
+			case "get":
+				order, err := tx.GetOrder(r.Context(), orderID)
+				if err != nil {
+					return fmt.Errorf("Failed to get order %s: %w", orderID, err)
+				}
+				log.Printf("Order %s retrieved in transaction: %s", orderID, order.TrackNumber)
+			default:
+				return fmt.Errorf("Unknown opertaion: %s", operation)
+			}
+		}
+		return nil
+	})
+
+	if err != nil {
+		log.Printf("Bulk operations failed: %v", err)
+		http.Error(w, fmt.Sprintf("Bulk operations failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string {
+		"status":	"success",
+		"message":	"Bulk operations completed successfully",
+	})
+}
+
 func (s *Server) benchmarkHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -155,7 +230,7 @@ func (s *Server) benchmarkHandler(w http.ResponseWriter, r *http.Request) {
 	// Preload first 5
 	ctx := context.Background()
 	for _, id := range cachedOrderIDs {
-		if order, err := s.db.GetOrder(ctx, id); err == nil && order != nil {
+		if order, err := s.repository.GetOrder(ctx, id); err == nil && order != nil {
 			s.cache.SetOrder(ctx, order)
 		}
 	}
@@ -183,7 +258,7 @@ func (s *Server) benchmarkHandler(w http.ResponseWriter, r *http.Request) {
 	// test db orders
 	for _, id := range dbOnlyOrderIDs {
 		start := time.Now()
-		order, err := s.db.GetOrder(ctx, id)
+		order, err := s.repository.GetOrder(ctx, id)
 		duration := time.Since(start)
 
 		if err == nil && order != nil {

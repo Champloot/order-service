@@ -11,36 +11,57 @@ import (
 	"order-service/config"
 	"order-service/internal/cache"
 	"order-service/internal/database"
-	"order-service/internal/http"
+	"order-service/internal/httphandler"
 	"order-service/internal/kafka"
+	"order-service/internal/ports"
+	"order-service/internal/validation"
 )
 
 func main() {
 	// config
-	cfg := config.LoadConfig()
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("Failed to load config: %v", err)
+	}
+
+	log.Printf("Starting service in %s mode", cfg.App.Env)
 
 	ctx := context.Background()
 
 	// db init
-	db, err := database.NewPostgresRepository(ctx, cfg.PostgresConnStr)
+	var orderRepository ports.OrderRepository
+	orderRepository, err = database.NewPostgresRepository(ctx, database.DatabaseConfig{
+		URL:               cfg.Database.URL,
+		MaxConns:          cfg.Database.MaxConns,
+		MinConns:          cfg.Database.MinConns,
+		MaxConnLifetime:   cfg.Database.MaxConnLifetime,
+		MaxConnIdleTime:   cfg.Database.MaxConnIdleTime,
+		HealthCheckPeriod: cfg.Database.HealthCheckPeriod,
+	})
 	if err != nil {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
-	defer db.Close()
+	defer orderRepository.(*database.PostgresRepository).Close()
 
 	// cache init
-	redisCache, err := cache.NewRedisCache(cfg.RedisAddr, cfg.RedisPassword, cfg.RedisDB, cfg.CacheTTL)
+	var orderCache ports.OrderCache
+	orderCache, err = cache.NewRedisCache(
+		cfg.Cache.Addr,
+		cfg.Cache.Password,
+		cfg.Cache.DB,
+		cfg.Cache.TTL,
+	)
 	if err != nil {
 		log.Fatalf("Failed to initialize Redis cache: %v", err)
 	}
-	defer redisCache.Close()
+	defer orderCache.Close()
 
 	// cache preload
-	orders, err := db.GetAllOrders(ctx)
+	orders, err := orderRepository.GetAllOrders(ctx)
 	if err != nil {
 		log.Printf("Failed to get orders for preloading cache: %v", err)
 	} else {
-		err = redisCache.PreloadOrders(ctx, orders)
+		err = orderCache.PreloadOrders(ctx, orders)
 		if err != nil {
 			log.Printf("Failed to preload cache: %v", err)
 		} else {
@@ -48,25 +69,61 @@ func main() {
 		}
 	}
 
+	var orderValidator validation.Validator
+	if cfg.Validation.Enabled {
+		orderValidator = validation.NewOrderValidator(validation.ValidationConfig{
+			RequireOrderUID:    cfg.Validation.RequireOrderUID,
+			RequireTrackNumber: cfg.Validation.RequireTrackNumber,
+			RequireEntry:       true,
+			RequireCustomerID:  true,
+			RequireDelivery:    true,
+			RequirePayment:     true,
+			RequireItems:       true,
+			ValidateEmail:      true,
+			ValidatePhone:      true,
+			ValidateAmounts:    true,
+			ValidateDates:      true,
+			MaxItems:           cfg.Validation.MaxItems,
+			MinAmount:          cfg.Validation.MinAmount,
+			MaxAmount:          cfg.Validation.MaxAmount,
+			MaxDateFuture:      cfg.Validation.MaxDateFuture,
+			MaxDatePast:        cfg.Validation.MaxDatePast,
+		})
+		log.Println("Order validation enabled")
+	} else {
+		orderValidator = validation.NewOrderValidator(validation.ValidationConfig{
+			RequireOrderUID: true,
+		})
+		log.Println("Order validation disabled (only basic checks)")
+	}
+
 	// kafka consumer init
-	consumer := kafka.NewConsumer(
-		cfg.KafkaBrokers,
-		cfg.KafkaTopic,
-		db,
+	var orderConsumer ports.OrderConsumer
+	orderConsumer = kafka.NewConsumer(
+		cfg.Kafka.Brokers,
+		cfg.Kafka.Topic,
+		orderRepository,
+		cfg.Consumer.Timeout,
+		cfg.Consumer.MinBytes,
+		cfg.Consumer.MaxBytes,
+		cfg.Consumer.MaxWait,
+		cfg.Consumer.RetryDelay,
+		orderValidator,
 	)
-	defer consumer.Close()
+	defer orderConsumer.Close()
 
 	go func() {
 		// time for kafka load
 		time.Sleep(10 * time.Second)
-		consumer.Start(ctx)
+		orderConsumer.Start(ctx)
 	}()
 
 	// http server init
-	httpServer := http.NewServer(redisCache, db)
+	var httpServer ports.HTTPServer
+	httpServer = httphandler.NewServer(orderCache, orderRepository)
 	go func() {
-		log.Printf("Starting HTTP server on %s", cfg.HTTPAddr)
-		if err := httpServer.Start(cfg.HTTPAddr); err != nil {
+		log.Printf("Starting HTTP server on %s", cfg.HTTP.Addr)
+		if err := httpServer.Start(cfg.HTTP.Addr); err != nil {
 			log.Fatalf("Failed to start HTTP server: %v", err)
 		}
 	}()
