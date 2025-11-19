@@ -2,25 +2,49 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"time"
 
+	"order-service/internal/database"
 	"order-service/internal/models"
-
-	"github.com/segmentio/kafka-go"
 )
 
 func main() {
-	// Connect Kafka
-	writer := &kafka.Writer{
-		Addr:     kafka.TCP("localhost:9092"),
-		Topic:    "orders",
-		Balancer: &kafka.LeastBytes{},
-	}
-	defer writer.Close()
+	ctx := context.Background()
 
+	config := database.DatabaseConfig{
+		URL:               "postgres://user:password@localhost:5432/orderservice?sslmode=disable",
+		MaxConns:          5,
+		MinConns:          2,
+		MaxConnLifetime:   time.Hour,
+		MaxConnIdleTime:   30 * time.Minute,
+		HealthCheckPeriod: time.Minute,
+	}
+
+	repo, err := database.NewPostgresRepository(ctx, config)
+	if err != nil {
+		log.Fatalf("Failed to connect to database: %v", err)
+	}
+	defer repo.Close()
+
+	orders := createTestOrders()
+	
+	for i := range orders {
+		err := repo.SaveOrder(ctx, &orders[i])
+		if err != nil {
+			log.Printf("Failed to save order %s: %v", orders[i].OrderUID, err)
+			continue
+		}
+		log.Printf("Order %s saved successfully", orders[i].OrderUID)
+	}
+
+	log.Println("Test data seeded successfully")
+}
+
+func createTestOrders() []models.Order {
+	var orders []models.Order
+	
 	// creation of 10 test order
 	for i := 1; i <= 10; i++ {
 		order := models.Order{
@@ -72,27 +96,8 @@ func main() {
 			DateCreated:       time.Now(),
 			OofShard:          "1",
 		}
-
-		// json serializtion
-		orderJSON, err := json.Marshal(order)
-		if err != nil {
-			log.Fatalf("Failed to marshal order: %v", err)
-		}
-
-		// message sending
-		err = writer.WriteMessages(context.Background(),
-			kafka.Message{
-				Key:   []byte(order.OrderUID),
-				Value: orderJSON,
-			},
-		)
-		if err != nil {
-			log.Fatalf("Failed to write message: %v", err)
-		}
-
-		log.Printf("Message sent successfully: %s", order.OrderUID)
-		time.Sleep(100 * time.Millisecond) // delay
+		orders = append(orders, order)
 	}
-
-	log.Println("All test messages sent successfully")
+	
+	return orders
 }
