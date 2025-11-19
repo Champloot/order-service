@@ -63,4 +63,3 @@ make test-integration
 - `REDIS_ADDR` - адрес Redis
 - `KAFKA_BROKERS` - адреса Kafka брокеров
 - `HTTP_ADDR` - порт HTTP сервера
-```
