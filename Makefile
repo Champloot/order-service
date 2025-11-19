@@ -1,4 +1,4 @@
-.PHONY: build run clean docker-up docker-down create-topic produce-test seed-db test generate-mocks
+.PHONY: build run clean docker-up docker-down create-topic produce-test seed-db test test-unit test-integration generate-mocks
 
 build:
 	go build -o bin/order-service ./cmd/server
@@ -27,5 +27,8 @@ seed-db:
 generate-mocks:
 	go generate ./internal/ports/...
 
-test: generate-mocks
-	go test ./... -v
+test-unit: generate-mocks
+	go test ./internal/... -tags="!integration"
+
+test-integration: generate-mocks
+	go test ./internal/... -tags="integration"
