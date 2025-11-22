@@ -1,9 +1,70 @@
-graph TD
-    A[Kafka] --> B[Consumer Service]
-    B --> C[PostgreSQL]
-    B --> D[Redis]
-    C -.-> D[Redis]
-    D -.-> C[PostgreSQL]
-    D --> E[HTTP Server]
-    E --> D
-    E <--> F[Web Interface]
+flowchart TB
+    subgraph External
+        A[External Systems]
+        B[Web Clients]
+        K[Kafka Producers]
+    end
+
+    subgraph OrderService[Order Service]
+        subgraph API
+            C[HTTP Server<br>:8080]
+        end
+        
+        subgraph Business
+            D[Kafka Consumer]
+            E[Order Validator]
+        end
+        
+        subgraph Data
+            F[Order Cache<br>Redis]
+            G[Order Repository<br>PostgreSQL]
+        end
+        
+        subgraph InternalTools
+            H[Test Producer]
+            I[Data Seeder]
+        end
+    end
+
+    subgraph Infrastructure
+        J[(Kafka<br>orders topic)]
+        L[(Redis<br>Cache)]
+        M[(PostgreSQL<br>Database)]
+    end
+
+    %% External interactions
+    A -->|HTTP REST API| C
+    B -->|Web Interface| C
+    K -->|Order Messages| J
+    
+    %% Internal service flow
+    J -->|Consume Messages| D
+    D -->|Validate| E
+    E -->|Save Orders| G
+    D -->|Save Orders| G
+    
+    %% API data flow
+    C -->|Check Cache| F
+    F -->|Cache Hit| C
+    F -->|Cache Miss| G
+    G -->|Return Data| C
+    C -->|Update Cache| F
+    
+    %% Data layer connections
+    F --> L
+    G --> M
+    
+    %% Internal tools
+    H -->|Produce Test Data| J
+    I -->|Seed Test Data| G
+
+    %% Styling
+    classDef external fill:#e1f5fe
+    classDef service fill:#f3e5f5
+    classDef infrastructure fill:#e8f5e8
+    classDef data fill:#fff3e0
+    
+    class A,B,K external
+    class C,D,E,H,I service
+    class J,L,M infrastructure
+    class F,G data
