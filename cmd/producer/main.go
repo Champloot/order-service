@@ -35,14 +35,22 @@ func main() {
             log.Fatalf("Failed to marshal order: %v", err)
         }
 
-        err = writer.WriteMessages(context.Background(),
-            kafka.Message{
-                Key:   []byte(order.OrderUID),
-                Value: orderJSON,
-            },
-        )
+        const maxRetries = 3
+        for i := 0; i < maxRetries; i++ {
+            err = writer.WriteMessages(context.Background(),
+                kafka.Message{
+                    Key:   []byte(order.OrderUID),
+                    Value: orderJSON,
+                },
+            )
+            if err == nil {
+                break
+            }
+            log.Printf("Attempt %d failed to write message: %v", i+1, err)
+            time.Sleep(time.Duration(i+1) * time.Second)
+        }
         if err != nil {
-            log.Fatalf("Failed to write message: %v", err)
+            log.Fatalf("Failed to write message after %d attempts: %v", maxRetries, err)
         }
 
         log.Printf("Message sent successfully: %s", order.OrderUID)

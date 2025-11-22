@@ -2,9 +2,11 @@ package cache
 
 import (
 	"context"
+	"log"
 	"encoding/json"
 	"fmt"
 	"time"
+	"errors"
 
 	"order-service/internal/models"
 	"order-service/internal/ports"
@@ -84,13 +86,23 @@ func (c *RedisCache) DeleteOrder(ctx context.Context, orderUID string) error {
 }
 
 func (c *RedisCache) PreloadOrders(ctx context.Context, orders []models.Order) error {
-	for _, order := range orders {
-		err := c.SetOrder(ctx, &order)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
+    var errs []error
+    successCount := 0
+    
+    for _, order := range orders {
+        if err := c.SetOrder(ctx, &order); err != nil {
+            errs = append(errs, fmt.Errorf("order %s: %w", order.OrderUID, err))
+            continue
+        }
+        successCount++
+    }
+    
+    log.Printf("Preloaded %d/%d orders into cache", successCount, len(orders))
+    
+    if len(errs) > 0 {
+        return fmt.Errorf("Failed to preload %d orders: %v", len(errs), errors.Join(errs...))
+    }
+    return nil
 }
 
 func (c *RedisCache) Close() error {

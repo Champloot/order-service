@@ -307,7 +307,8 @@ func (r *PostgresRepository) getAllOrders(ctx context.Context, querier interface
 	if err != nil {
 		return nil, fmt.Errorf("Failed to query orders: %w", err)
 	}
-	defer rows.Close()
+
+	defer rows.Close() // no err to return in pgx/v5
 
 	var orders []models.Order
 

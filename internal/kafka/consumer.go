@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"time"
+	"errors"
 
 	"order-service/internal/models"
 	"order-service/internal/ports"
@@ -64,7 +65,10 @@ func (c *Consumer) Start(ctx context.Context) {
 			msg, err := c.reader.ReadMessage(ctx)
 			if err != nil {
 				log.Printf("Error reading message: %v", err)
-				time.Sleep(c.retryDelay) // Пауза перед повторной попыткой
+				if errors.Is(err, context.Canceled) {
+			    	return
+			    }
+				time.Sleep(c.retryDelay)
 				continue
 			}
 

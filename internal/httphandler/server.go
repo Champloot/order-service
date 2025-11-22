@@ -52,7 +52,19 @@ func (s *Server) GetHandler() http.Handler {
 
 func (s *Server) Start(addr string) error {
 	log.Printf("Starting HTTP server on %s", addr)
-	return http.ListenAndServe(addr, s.mux)
+	return http.ListenAndServe(addr, s.recoveryMiddleware(s.mux))
+}
+
+func (s *Server) recoveryMiddleware(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        defer func() {
+            if err := recover(); err != nil {
+                log.Printf("Panic recovered: %v", err)
+                http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+            }
+        }()
+        next.ServeHTTP(w, r)
+    })
 }
 
 func (s *Server) healthHandler(w http.ResponseWriter, r *http.Request) {
@@ -136,7 +148,10 @@ func (s *Server) getOrderHandler(w http.ResponseWriter, r *http.Request) {
 
 		// Save to cache for future requests
 		go func() {
-			if err := s.cache.SetOrder(context.Background(), order); err != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			if err := s.cache.SetOrder(ctx, order); err != nil {
 				log.Printf("Failed to set order in cache: %v", err)
 			}
 		}()

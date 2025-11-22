@@ -41,7 +41,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
-	defer orderRepository.(*database.PostgresRepository).Close()
+	defer orderRepository.(*database.PostgresRepository).Close() // no err to return
 
 	// cache init
 	var orderCache ports.OrderCache
@@ -54,7 +54,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to initialize Redis cache: %v", err)
 	}
-	defer orderCache.Close()
+	defer func() {
+	    if err := orderCache.Close(); err != nil {
+	        log.Printf("Error closing cache: %v", err)
+	    }
+	}()
 
 	// cache preload
 	orders, err := orderRepository.GetAllOrders(ctx)
@@ -110,7 +114,11 @@ func main() {
 		cfg.Consumer.RetryDelay,
 		orderValidator,
 	)
-	defer orderConsumer.Close()
+	defer func() {
+	    if err := orderConsumer.Close(); err != nil {
+	        log.Printf("Error closing consumer: %v", err)
+	    }
+	}()
 
 	go func() {
 		// time for kafka load
