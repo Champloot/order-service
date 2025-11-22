@@ -111,37 +111,9 @@ Integration-тесты
 make test-integration
 ```
 
-```bash
-make docker-up			# Запуск контейнеров
-make docker-down		# Остановка контейнеров  
-make run				# Запуск приложения
-make produce-test		# Генерация тестовых заказов
-make test-unit			# Запуск юнит-тестов
-make test-integration	# Запуск интеграционных тестов
-```
-
 ## API endpoints
 
 - `GET /api/health` - проверка здоровья
 - `GET /api/order/{id}` - получение заказа по ID
 - `GET /api/benchmark` - тестирование производительности
 - `POST /api/orders/bulk` - массовые операции
-
-## Тестирование
-
-```bash
-# Юнит-тесты
-make test-unit
-
-# Интеграционные тесты (требуют запущенные контейнеры)
-make docker-up
-make test-integration
-```
-
-## Конфигурация
-
-Настройки через переменные окружения:
-- `POSTGRES_URL` - подключение к PostgreSQL
-- `REDIS_ADDR` - адрес Redis
-- `KAFKA_BROKERS` - адреса Kafka брокеров
-- `HTTP_ADDR` - порт HTTP сервера
