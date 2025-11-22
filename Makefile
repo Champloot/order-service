@@ -1,4 +1,6 @@
-.PHONY: build run clean docker-up docker-down create-topic produce-test seed-db test test-unit test-integration generate-mocks
+.PHONY: build run clean docker-up docker-down produce-test seed-db test-unit test-integration generate-mocks
+
+GOPATH_BIN = $(shell go env GOPATH)/bin
 
 build:
 	go build -o bin/order-service ./cmd/server
@@ -25,10 +27,10 @@ seed-db:
 	go run ./cmd/seed
 
 generate-mocks:
-	go generate ./internal/ports/...
+	PATH="$(GOPATH_BIN):$(PATH)" go generate ./internal/ports/...
 
 test-unit: generate-mocks
-	go test ./internal/... -tags="!integration"
+	go test ./internal/... -tags="!integration" -count=1
 
 test-integration: generate-mocks
-	go test ./internal/... -tags="integration"
+	go test ./internal/... -tags="integration" -count=1
