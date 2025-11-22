@@ -1,4 +1,4 @@
-.PHONY: build run clean docker-up docker-down produce-test seed-db test-unit test-integration generate-mocks
+.PHONY: build run clean docker-up docker-down create-topic produce-test seed-db test-unit test-integration generate-mocks
 
 GOPATH_BIN = $(shell go env GOPATH)/bin
 

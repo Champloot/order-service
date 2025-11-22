@@ -1,5 +1,6 @@
 # Binares
 bin/
+mocks/
 *.exe
 *.test
 
