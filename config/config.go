@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/joho/godotenv"
 )
 
 type Config struct {
@@ -80,6 +82,8 @@ type ValidationConfig struct {
 }
 
 func Load() (*Config, error) {
+	_ = godotenv.Load()
+
 	cfg := &Config{
 		Database: DatabaseConfig{
 			URL:               getEnv("POSTGRES_URL", "postgres://user:password@localhost:5432/orderservice?sslmode=disable"),
